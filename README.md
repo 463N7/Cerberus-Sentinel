@@ -4,11 +4,12 @@
 
 ## USB installer
 
-The public [Cerberus USB Installer](https://cerberus-flasher.handyvine9.chatgpt.site)
+The public [Cerberus USB Installer](https://463n7.github.io/Cerberus-Flasher/)
 guides desktop Chrome/Edge through a temporary S3 bridge, onboard C5 programming,
 final S3 programming, and a startup check using the board's USB connector.
 The firmware source repository remains private. Only the web application,
-release metadata, firmware binaries, and redistribution notices are published.
+release metadata, firmware binaries, and redistribution notices are published
+in the separate [Cerberus-Flasher repository](https://github.com/463N7/Cerberus-Flasher).
 
 **Development preview:** the browser workflow and revised automatic USB handoff
 still require a complete physical-board test. BOOT/RESET recovery instructions

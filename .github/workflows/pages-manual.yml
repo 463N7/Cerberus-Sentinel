@@ -1,7 +1,9 @@
 name: Deploy web installer to Pages (optional)
 
-# Current hosting uses Sites. This workflow is inactive until the repository
-# owner enables Pages support and explicitly sets ENABLE_GITHUB_PAGES=true.
+# Primary hosting uses the separate public 463N7/Cerberus-Flasher repository.
+# This optional workflow deploys from this private source repository only; it
+# does not update the public repository. It is inactive until Pages support for
+# this repository and ENABLE_GITHUB_PAGES=true are explicitly configured.
 on:
   workflow_dispatch:
 

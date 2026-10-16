@@ -7,10 +7,16 @@ installer is a static HTTPS website built from `web/`. It contains the browser
 interface, the selected firmware images, and required redistribution notices.
 It does not require visitors to sign into GitHub or install a development toolchain.
 
-Current publication uses **Sites**, from a separate deployment directory outside
-the firmware checkout. GitHub Pages could not be enabled for this private
-repository under the current account plan. The optional Pages workflow is kept
-disabled unless `ENABLE_GITHUB_PAGES=true` is explicitly configured later.
+Current publication uses **GitHub Pages** from the separate public repository
+[463N7/Cerberus-Flasher](https://github.com/463N7/Cerberus-Flasher). The canonical
+installer URL is **https://463n7.github.io/Cerberus-Flasher/**. Pages serves the
+public repository's `main` branch from its root directory. The public repository
+contains the compiled website and release files; it has separate Git history
+and does not contain the private firmware source checkout.
+
+The private repository's optional Pages workflow is not used for this public
+repository. It remains disabled unless Pages support for the private repository
+and `ENABLE_GITHUB_PAGES=true` are explicitly configured later.
 
 Only the contents of `web/dist/` belong in the public deployment directory.
 Never publish the checkout, `dist/` firmware package history, build logs,
@@ -141,17 +147,19 @@ Then validate the actual built files from the project root:
 python tools/export_web_release.py --verify-site web/dist/firmware
 ```
 
-Publish only the verified `web/dist/` contents through Sites. The build uses
-relative asset URLs so it can also live beneath a project path. Serve the site
-over HTTPS; the local preview uses the browser's localhost exception. Test USB
-permissions and reconnect steps in a supported desktop Chrome or Edge browser.
+Publish only the verified `web/dist/` contents to the public flasher repository.
+The build uses relative asset URLs for the `/Cerberus-Flasher/` project path and
+can also use a custom domain. Serve the site over HTTPS; the local preview uses
+the browser's localhost exception. Test USB permissions and reconnect steps in
+a supported desktop Chrome or Edge browser.
 
 ### Update the existing public installer
 
-The existing site is [Cerberus USB Installer](https://cerberus-flasher.handyvine9.chatgpt.site).
-Its linked Sites directory is the sibling **`../cerberus-web-publish/`**; its
-`.openai/hosting.json` selects **`dist`** as the public directory. Keep that
-hosting association and publish updates to the existing site.
+The existing site is [Cerberus USB Installer](https://463n7.github.io/Cerberus-Flasher/).
+Maintain a separate checkout of [Cerberus-Flasher](https://github.com/463N7/Cerberus-Flasher)
+for publication. Its `index.html`, `assets/`, `firmware/`, `guardian.svg`, and
+`notices.txt` sit at the repository root, alongside `.nojekyll`. Do not place
+the website inside a second `dist/` directory.
 
 1. Make changes in the private `Cerberus-Sentinel` checkout. For firmware changes,
    build a matched package and export it with `--set-latest`. A website-only
@@ -159,33 +167,41 @@ hosting association and publish updates to the existing site.
 2. Run the checks and build above. Commit and push the source, selected public
    firmware files, lockfile, and notices to the private repository, and require
    the web CI check to pass for that commit.
-3. Copy the contents of the checked **`web/dist/`** into
-   **`../cerberus-web-publish/dist/`**. Alternatively, use the
-   `cerberus-usb-installer` CI artifact from that exact commit as the complete
-   static directory. Keep the deployment directory's `.openai/hosting.json`
-   outside the public `dist/`; never copy the firmware checkout into staging.
-4. Verify the staged firmware from the private project root:
+3. Copy the contents of the checked **`web/dist/`** into the public flasher
+   checkout's root. Alternatively, use the `cerberus-usb-installer` CI artifact
+   from that exact commit as the complete static website. Preserve the public
+   checkout's own Git metadata, `.nojekyll`, and any configured `CNAME`; never
+   copy the private checkout, its `.git` history, or hosting credentials.
+4. Verify the copied firmware from the private project root, replacing the
+   placeholder below with the actual public checkout location:
 
    ```powershell
-   python tools/export_web_release.py --verify-site ../cerberus-web-publish/dist/firmware
+   python tools/export_web_release.py --verify-site "<public-checkout>/firmware"
    ```
 
-5. Publish the existing Sites project from `../cerberus-web-publish/`. Publishing
-   is a separate action: pushing to GitHub or passing CI does **not** update the
-   live website. Do not create a new site for each firmware release.
+5. Review the public checkout's changed files, commit the compiled assets, and
+   push to its `main` branch. Wait for the public repository's Pages deployment
+   to succeed. Pushing the **private source repository** or passing its CI does
+   **not** update the live website; publishing to the public repository is a
+   separate step. Keep that repository public and the firmware source private.
 6. Open the public HTTPS site and confirm its `firmware/latest.json` selects the
    intended release and manifest hash. Confirm the page finishes downloading
    and checking all nine images before offering USB installation.
 
-Make future interface edits in `web/`, not in the staged generated files: the
+Make future interface edits in `web/`, not in the public generated files: the
 next build replaces those files. Keep the selected release's directories
 immutable and preserve required notices when changing the selection.
 
-On Windows, the Sites publishing helper needs Git Bash on `PATH`. For an archive
-path beginning with `C:/`, set `TAR_OPTIONS=--force-local` in that publishing
-process so GNU tar treats the drive letter as a local path. Pass short-lived
-Sites credentials through the helper's hidden standard input; never store them
-in this repository or the public directory.
+No cross-repository publishing secret or automation is configured. If automatic
+publication is added later, keep its narrowly scoped credential in private
+Actions secrets and publish only the reviewed static build. Never put a token
+in the browser application or public repository.
+
+For a future custom domain, configure it in the public flasher repository's
+Pages settings and retain the resulting `CNAME` file on every update. A
+`flash.<your-domain>` subdomain points by DNS CNAME to `463n7.github.io`, without
+a repository path. Enable HTTPS after the domain is verified. Changing domains
+starts a new browser installation session because progress is stored per origin.
 
 `web-checks.yml` runs the package/export rejection tests, validates the selected
 firmware, runs `npm ci`, `npm test`, and `npm run build`, verifies the built
@@ -199,9 +215,11 @@ are private Actions artifacts. A completed run does not publish firmware or
 replace `latest.json`; select a reviewed package explicitly after acceptance.
 Build diagnostics remain private and have a short retention period.
 
-`pages-manual.yml` is an optional manually dispatched alternative after Pages is
-available and configured. It deploys only `web/dist/` using the `github-pages`
-environment. The current Sites deployment is separate from this workflow.
+`pages-manual.yml` is an optional alternative for hosting directly from the
+private source repository if that repository becomes eligible for Pages. It
+deploys only `web/dist/` using that repository's `github-pages` environment. It
+does not deploy to `463N7/Cerberus-Flasher`; the current public site uses the
+separate repository's branch-based Pages deployment described above.
 
 ## Publication and attribution review
 
