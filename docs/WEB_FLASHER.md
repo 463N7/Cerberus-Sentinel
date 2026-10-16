@@ -146,6 +146,47 @@ relative asset URLs so it can also live beneath a project path. Serve the site
 over HTTPS; the local preview uses the browser's localhost exception. Test USB
 permissions and reconnect steps in a supported desktop Chrome or Edge browser.
 
+### Update the existing public installer
+
+The existing site is [Cerberus USB Installer](https://cerberus-flasher.handyvine9.chatgpt.site).
+Its linked Sites directory is the sibling **`../cerberus-web-publish/`**; its
+`.openai/hosting.json` selects **`dist`** as the public directory. Keep that
+hosting association and publish updates to the existing site.
+
+1. Make changes in the private `Cerberus-Sentinel` checkout. For firmware changes,
+   build a matched package and export it with `--set-latest`. A website-only
+   change can retain the existing firmware selection.
+2. Run the checks and build above. Commit and push the source, selected public
+   firmware files, lockfile, and notices to the private repository, and require
+   the web CI check to pass for that commit.
+3. Copy the contents of the checked **`web/dist/`** into
+   **`../cerberus-web-publish/dist/`**. Alternatively, use the
+   `cerberus-usb-installer` CI artifact from that exact commit as the complete
+   static directory. Keep the deployment directory's `.openai/hosting.json`
+   outside the public `dist/`; never copy the firmware checkout into staging.
+4. Verify the staged firmware from the private project root:
+
+   ```powershell
+   python tools/export_web_release.py --verify-site ../cerberus-web-publish/dist/firmware
+   ```
+
+5. Publish the existing Sites project from `../cerberus-web-publish/`. Publishing
+   is a separate action: pushing to GitHub or passing CI does **not** update the
+   live website. Do not create a new site for each firmware release.
+6. Open the public HTTPS site and confirm its `firmware/latest.json` selects the
+   intended release and manifest hash. Confirm the page finishes downloading
+   and checking all nine images before offering USB installation.
+
+Make future interface edits in `web/`, not in the staged generated files: the
+next build replaces those files. Keep the selected release's directories
+immutable and preserve required notices when changing the selection.
+
+On Windows, the Sites publishing helper needs Git Bash on `PATH`. For an archive
+path beginning with `C:/`, set `TAR_OPTIONS=--force-local` in that publishing
+process so GNU tar treats the drive letter as a local path. Pass short-lived
+Sites credentials through the helper's hidden standard input; never store them
+in this repository or the public directory.
+
 `web-checks.yml` runs the package/export rejection tests, validates the selected
 firmware, runs `npm ci`, `npm test`, and `npm run build`, verifies the built
 firmware tree, and saves the static website as a private CI artifact. It does not

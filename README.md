@@ -255,5 +255,5 @@ Host rendering uses `ziglang==0.14.1`. See
 - `tools/` — builds, packages, previews, tests, explicit flashing.
 
 See [the roadmap](TODO.md), [board acceptance](docs/SENTINEL_ACCEPTANCE.md),
-[verification results](docs/VERIFICATION_WATCH.md), and [restricted scripting](docs/SCRIPTING.md). Historical Base documentation
+[USB bridge and recovery](docs/C5_USB_BRIDGE.md), and [restricted scripting](docs/SCRIPTING.md). Historical Base documentation
 is retained in `docs/BASE_README.md` and `docs/BASE_BACKLOG.md`.
