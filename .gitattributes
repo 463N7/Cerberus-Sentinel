@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bin binary
+*.png binary
+*.zip binary
+# Release checksums cover exact bytes, including line endings in notices/JSON.
+web/public/firmware/** -text -whitespace
+web/public/notices.txt -text -whitespace

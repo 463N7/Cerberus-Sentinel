@@ -1,0 +1,3 @@
+dependencies:
+  espressif/qrcode: "0.2.0"
+  espressif/esp_tinyusb: "2.2.1"

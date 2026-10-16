@@ -1,0 +1,62 @@
+name: Check web installer
+
+on:
+  push:
+    paths:
+      - 'web/**'
+      - 'tools/export_web_release.py'
+      - 'tools/test_export_web_release.py'
+      - 'tools/package_sentinel.py'
+      - 'tools/test_sentinel_package.py'
+      - '.github/workflows/web-checks.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'tools/export_web_release.py'
+      - 'tools/test_export_web_release.py'
+      - 'tools/package_sentinel.py'
+      - 'tools/test_sentinel_package.py'
+      - '.github/workflows/web-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify release export and package rejection gates
+        run: |
+          python tools/test_sentinel_package.py
+          python tools/test_export_web_release.py
+          python tools/export_web_release.py --verify-site web/public/firmware
+      - name: Install locked web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Test installer
+        working-directory: web
+        run: npm test
+      - name: Build public files
+        working-directory: web
+        run: npm run build
+      - name: Verify the exact firmware tree to be published
+        run: python tools/export_web_release.py --verify-site web/dist/firmware
+      - name: Save static website for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: cerberus-usb-installer
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 14

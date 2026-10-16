@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0c1323">
+  <meta name="description" content="Install Cerberus Sentinel on both onboard processors with one USB cable. A guided installer for the Cerberus wireless companion.">
+  <title>Cerberus · USB Installer</title>
+  <link rel="icon" href="./guardian.svg" type="image/svg+xml">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+  <header class="topbar"><a href="./" class="brand"><img src="./guardian.svg" alt="" width="38" height="38"> CERBERUS <span>SENTINEL</span></a><span class="topnote"><i></i> USB INSTALLER</span></header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">YOUR GUARDIAN. READY TO WATCH.</p><h1>Bring Cerberus<br><span>to life.</span></h1><p class="lede">Install Sentinel on both onboard processors.<br>One USB cable. Every step verified.</p></div>
+      <div class="guardian"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><img src="./guardian.svg" alt="Three-headed Cerberus guardian"><span class="guardian-caption">WATCH / SCOUT / SENSE / LEARN</span></div>
+    </section>
+    <div class="release-bar"><span><span class="dot"></span> <strong id="version">Loading release…</strong></span><span id="release-status">Checking download integrity</span><a id="release-manifest" hidden>Release details ↗</a></div>
+    <div id="compatibility" class="notice" hidden></div>
+    <div class="workspace">
+      <aside class="steps" aria-label="Installation progress">
+        <p class="eyebrow">THE INSTALLATION</p>
+        <ol>
+          <li data-stage="bridge"><span class="step-number">01</span><div><strong>Prepare Cerberus</strong><small>Open the path to both chips</small></div><span class="step-state"></span></li>
+          <li data-stage="c5"><span class="step-number">02</span><div><strong>Install radio firmware</strong><small>Program the onboard C5</small></div><span class="step-state"></span></li>
+          <li data-stage="s3"><span class="step-number">03</span><div><strong>Install Sentinel</strong><small>Program the S3 touchscreen</small></div><span class="step-state"></span></li>
+          <li data-stage="check"><span class="step-number">04</span><div><strong>Check your guardian</strong><small>Confirm both chips are ready</small></div><span class="step-state"></span></li>
+        </ol>
+        <div class="connection-note"><span>BEFORE YOU BEGIN</span><p>Use desktop Chrome or Edge and a USB data cable. Connect one Cerberus and close other serial monitors.</p><p>Keep this tab open and your computer awake during installation.</p></div>
+      </aside>
+      <section class="install-card" aria-labelledby="stage-title">
+        <div class="card-heading"><span id="stage-label" class="eyebrow">STEP 01 / 04</span><span class="chip-badge" id="chip-label">ESP32-S3</span></div>
+        <h2 id="stage-title">Prepare your Cerberus</h2>
+        <p id="stage-description">The installer downloads and checks the complete firmware set before changing your board.</p>
+        <div id="instructions" class="instructions"></div>
+        <label id="consent-line" class="consent"><input type="checkbox" id="consent"> <span>I’m installing on a production Cerberus with an S3 and onboard C5. This replaces its firmware; I have backed up important settings.</span></label>
+        <div class="progress-block"><div class="progress-label"><span id="progress-label">Checking release files</span><span id="percent">0%</span></div><progress id="progress" max="100" value="0">0%</progress></div>
+        <p id="status" class="status" role="status" aria-live="polite">Preparing the downloads…</p>
+        <div class="actions"><button id="primary" disabled>Connect & prepare <span>→</span></button><button id="download-log" class="secondary">Save report</button></div>
+        <div id="check-results" hidden></div>
+        <details id="recovery"><summary>Recover or resume an installation</summary><p>If the screen is blank after preparation, that is expected: the temporary bridge is running.</p><div class="recovery-actions"><button id="resume-c5" class="secondary">Bridge already installed</button><button id="restore-s3" class="secondary">Restore S3 firmware</button><button id="restart" class="secondary">Start a new board</button></div><p>To enter S3 download mode: hold <strong>S3 BOOT</strong>, tap <strong>S3 RESET</strong>, then release BOOT. Use the S3 controls, not the C5 controls. Select the USB JTAG/serial device when asked.</p><p>Restoring only the S3 does not update or verify the C5. A complete install and startup check are still required.</p></details>
+      </section>
+    </div>
+    <section class="bottom-grid"><div><h3>A direct connection.</h3><p>Your browser talks to Cerberus through USB. No account, desktop installer, or expansion board is required. Device reports stay in this browser unless you save them.</p></div><div><h3>Built for your board.</h3><p>Production Cerberus · S3 with 16 MB flash / 2 MB PSRAM · onboard C5. Firmware images are checked against the detected chip before writing.</p></div><div><h3>Development preview.</h3><p>This USB installer is awaiting a complete test on a physical Cerberus. Automatic USB transitions may require the guided BOOT/RESET step.</p></div></section>
+    <details class="technical"><summary>Installation log</summary><pre id="log" aria-label="Installation log"></pre></details>
+  </main>
+  <footer><span>CERBERUS SENTINEL <span class="muted">/ Defensive discovery. Built to learn.</span></span><a href="./notices.txt">Third-party notices</a></footer>
+  <script type="module" src="/src/app.js"></script>
+</body></html>

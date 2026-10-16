@@ -1,0 +1,9 @@
+{
+  "name": "cerberus-usb-installer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"dev": "vite --host 127.0.0.1", "build": "vite build --base=./", "test": "node --test test/*.test.js", "preview": "vite preview --host 127.0.0.1"},
+  "dependencies": {"esptool-js": "0.7.0", "spark-md5": "3.0.2"},
+  "devDependencies": {"vite": "8.3.4"}
+}

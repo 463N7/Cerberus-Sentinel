@@ -1,0 +1,26 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "mdns_scanner.c"
+        "network_diagnostics.c"
+        "ble_scanner.c"
+        "event_queue.c"
+        "fragment_transfer.c"
+        "ieee802154_scanner.c"
+        "wifi_scanner.c"
+        "../../shared/cerberus_watch_capture.c"
+        "../../shared/sentinel_watch_protocol.c"
+    INCLUDE_DIRS
+        "."
+        "../../shared"
+    PRIV_REQUIRES
+        bt
+        esp_event
+        esp_http_client
+        ieee802154
+        esp_netif
+        esp_wifi
+        mbedtls
+        mdns
+        nvs_flash
+)

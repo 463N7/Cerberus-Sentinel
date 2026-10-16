@@ -1,0 +1,26 @@
+.pio/
+.codex-remote-attachments/
+build/
+managed_components/
+sdkconfig
+sdkconfig.*
+sdkconfig.old
+!sdkconfig.defaults
+!sdkconfig.*.defaults
+!c5_firmware/sdkconfig.defaults
+!c5_firmware/sdkconfig.*.defaults
+dist/
+artifacts/
+__pycache__/
+*.pyc
+.sentinel-build-*.log
+CERBERUS_WARDRIVING_WORK_PLAN.md
+tmp/
+node_modules/
+.env
+.env.*
+*.log
+# Local board receipts and captures stay on the development machine.
+docs/FIRST_BOARD_FLASH.md
+docs/VERIFICATION*.md
+docs/TOOLS_AUDIT.md
