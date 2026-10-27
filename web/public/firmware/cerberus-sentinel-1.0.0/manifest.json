@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "product": "Cerberus Sentinel",
-  "releaseId": "cerberus-sentinel-0.5.0-dev-20261016T130540Z",
-  "version": "0.5.0-dev",
-  "status": "development candidate",
-  "hardwareValidation": "not performed by packaging",
-  "builtUtc": "2026-10-16T13:05:40.580735+00:00",
-  "sourceSha256": "1883867d288baa6a49cd624bb2ec62b97c5ecb786496f2cafe68ceafabfd5c0c",
-  "packageManifestSha256": "4d0e5e10e8f3f2c880488f2fce29c52a9c284d030d2a8fc11f066d136e121556",
+  "releaseId": "cerberus-sentinel-1.0.0",
+  "version": "1.0.0",
+  "status": "stable",
+  "hardwareValidation": "Owner-reported acceptance on 2026-10-27; packaging performs no hardware tests",
+  "builtUtc": "2026-10-27T17:17:16.936480+00:00",
+  "sourceSha256": "1c3d856b306338072925fe4b76fd7c1f1d8aef0b6920e9a141f7040787dbc90d",
+  "packageManifestSha256": "0761a767df773ce407338b5994ed1d8552b5e1e2893f49bf8bd79d8bd9d7281e",
   "hardware": {
     "s3FlashBytes": 16777216,
     "s3PsramBytes": 2097152,
@@ -52,8 +52,8 @@
           "path": "bridge/app.bin",
           "offset": 65536,
           "size": 285920,
-          "sha256": "4569d80aee9e787491fdbf1a140739b7f8dda8cc5d0229d2ea110ed82e5b4c7e",
-          "md5": "21b89773251037b7df4f09e549dd327a"
+          "sha256": "7e7580e6d255a91496e5c252e1d407a3b1ba99ff246ebb43d659082cbf95bfdb",
+          "md5": "2c0c7a3df20bc918f5ad8bc6130ee113"
         }
       ],
       "partitions": [
@@ -123,8 +123,8 @@
           "path": "c5/app.bin",
           "offset": 65536,
           "size": 1568848,
-          "sha256": "efe9a5db6c1bab0f5990ae387eff77d42711a6d6a3ed12cbb4611628dd6084ff",
-          "md5": "6c65e7d0e3a17f491446ac8adca7c967"
+          "sha256": "fc2b942cc47d1dc1207998a84d2e2a1d90354d35eb852902628a1a7f3cc8a1fe",
+          "md5": "7b136db9e17bcfd0362710e2f1a38985"
         }
       ],
       "partitions": [
@@ -180,9 +180,9 @@
           "role": "app",
           "path": "s3/app.bin",
           "offset": 65536,
-          "size": 1392768,
-          "sha256": "034d00b533657b8a857f5de4417aefe66ef8383d46c56a02700e8a9529c9235a",
-          "md5": "35758166d10c46fae3819765bf2d5d9d"
+          "size": 1392480,
+          "sha256": "50fae4399aa724513cb72f38336abecc0eb15746d4abadb5451040ed018a9961",
+          "md5": "abc97607dfb77416ec2a3b4a046e7d80"
         }
       ],
       "partitions": [

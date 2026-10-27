@@ -79,8 +79,9 @@ restart preserves the USB controller selection. See Espressif
 [PHY switching fix](https://github.com/espressif/esp-idf/issues/15912).
 The bridge builds against the installed ESP-IDF 6.0.1 API.
 
-**Hardware qualification is still required for the new identity query,
-automatic handoff, and retry command.** Always offer this recovery path: hold the **S3 BOOT** button,
+The owner reported successful testing of the existing firmware and flashing
+workflow and approved the **1.0.0** release on **2026-10-27**. Keep this recovery
+path available: hold the **S3 BOOT** button,
 tap **RESET**, release BOOT, then select the native S3 USB port and install the
 final S3 firmware. Earlier bridge builds repeatedly required this physical
 recovery on Windows. Do not mark an installation complete until the final

@@ -19,6 +19,24 @@ Never publish the checkout, `dist/` firmware package history, build logs,
 schematics, `.git`, credentials, or developer notes. The public firmware binaries
 remain downloadable; keeping the source repository private does not hide them.
 
+## Privacy and saved reports
+
+The installer saves board identifiers and installation progress in browser
+storage so it can resume and check that the same board remains connected.
+Installation logs and startup diagnostics stay in this browser unless **Save
+report** is selected. The saved report includes board MAC addresses and
+diagnostic output; keep it private when sharing troubleshooting information.
+Firmware files are downloaded from the public host, but the installer does not
+upload board reports or radio captures.
+
+The firmware's local dashboard uses HTTP over its password-protected WPA2 access
+point and has a separate browser password. It does not provide HTTPS encryption.
+NVS settings and SD files are unencrypted at rest, so physical access to the
+board or card matters. Address masks are pseudonyms, not anonymity; names and
+other broadcast details can still identify devices. Cerberus does not
+automatically upload captured observations. Explicit network diagnostics make
+DNS/HTTPS checks against `example.com` and a time check against `pool.ntp.org`.
+
 ## Hardware flow
 
 The installer handles the production ESP32-S3 with 16 MB flash / 2 MB quad PSRAM,
@@ -33,8 +51,11 @@ and the onboard ESP32-C5 with the conservative 2 MB firmware layout.
 Browsers can require a new device selection when USB identity changes. A browser
 permission prompt is an operator action, even when the device reset is automated.
 Keep **hold BOOT, tap RESET, release BOOT** as the recovery instruction whenever
-the native S3 loader does not return. Blank-board flashing, software USB handoff,
-and interrupted-write recovery need physical validation with this web workflow.
+the native S3 loader does not return. The owner reported successful testing of
+the existing feature build and approved **1.0.0** on **2026-10-27**, before the
+rebuilt, versioned v1 package was produced. Repeat
+blank-board installation and interrupted-write recovery checks when changing
+the flashing workflow or supported hardware.
 
 The C5 remains at 115200 baud and uses 4 KiB write blocks. Its existing application
 write took about 146 seconds through the bridge. Do not advertise a faster factory
@@ -48,18 +69,23 @@ a future factory-reset function must be a distinct explicit operation.
 
 ## Export a release
 
-Start with a matched package produced by `tools/build_sentinel.py --target all
---package`. Export does not compile code, access USB, alter flash, or qualify a
-candidate for shipping.
+Start with a matched build. Ordinary packaging (`tools/build_sentinel.py --target
+all --package` or `tools/package_sentinel.py`) produces a candidate. An accepted
+production package requires `--release --accepted-on YYYY-MM-DD`; use the actual
+owner acceptance date. The v1.0.0 package and export commands are:
 
 ```powershell
-python tools/export_web_release.py dist/cerberus-sentinel-VERSION-TIMESTAMP --verify-only
-python tools/export_web_release.py dist/cerberus-sentinel-VERSION-TIMESTAMP --set-latest
+python tools/build_sentinel.py --target all
+python tools/package_sentinel.py --release --accepted-on 2026-10-27 --output dist/cerberus-sentinel-1.0.0
+python tools/export_web_release.py dist/cerberus-sentinel-1.0.0 --verify-only
+python tools/export_web_release.py dist/cerberus-sentinel-1.0.0 --set-latest
 python tools/export_web_release.py --verify-site web/public/firmware
 ```
 
-The first argument is the actual package directory. Replace `VERSION-TIMESTAMP`
-with the generated package name. The default output is `web/public/firmware/`.
+Export does not compile code, access USB, alter flash, or qualify a candidate
+for shipping. Its first argument is the actual package directory; substitute
+the new directory when publishing later releases. The default export output is
+`web/public/firmware/`.
 Use `--output` for an isolated export, or `--release-id` to give a new immutable
 directory a portable name. Existing release directories are never overwritten.
 Without `--set-latest`, the export does not change the installer selection.
@@ -77,9 +103,11 @@ source receipt. For an archived package, `--source-root` can point at its matchi
 source checkout. This prevents the website from pairing old firmware with new
 startup expectations.
 
-The package's status remains unchanged. Selecting a `development candidate`
-does not turn it into a production-qualified release. Record physical acceptance
-before promoting a build as the shipping version.
+The package's status and hardware-acceptance statement remain unchanged during
+export. Version 1.0.0 records the owner's successful testing of the existing
+feature build and release approval on 2026-10-27, before the versioned package
+was rebuilt. Selecting a later candidate does not grant it that acceptance;
+record physical acceptance before promoting a new shipping version.
 
 ## Public manifest contract
 
@@ -87,7 +115,7 @@ before promoting a build as the shipping version.
 
 ```json
 {
-  "manifest": "cerberus-sentinel-VERSION-TIMESTAMP/manifest.json",
+  "manifest": "cerberus-sentinel-1.0.0/manifest.json",
   "sha256": "SHA256_OF_EXACT_MANIFEST_BYTES"
 }
 ```
@@ -219,9 +247,9 @@ Build diagnostics remain private and have a short retention period.
   open source or add a license on the owner's behalf. Keep existing third-party
   attributions when distributing binaries, and retain notices for browser
   dependencies in the public web build.
-- Build success does not demonstrate a real board flash. Record
-  a full fresh-board run and an interrupted-flash recovery before using the
-  installer as a qualified production station.
+- Keep owner-reported hardware acceptance separate from automated build checks.
+  For future revisions, record a full fresh-board run and interrupted-flash
+  recovery when changing the installer or supported hardware.
 
 `web/public/notices.txt` includes full notices for the web runtime libraries,
 their flasher stubs, ESP-IDF and relevant firmware components. Regenerate it

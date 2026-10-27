@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Package a matched development build without reading or flashing any device."""
+"""Package matched firmware; stable releases require explicit owner acceptance."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import struct
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,7 +153,7 @@ def inspect_target(name: str) -> dict:
             "flash_settings": metadata["flash_settings"], "partitions": partitions, "images": images}
 
 
-def package(output: Path | None = None) -> Path:
+def package(output: Path | None = None, *, release: bool = False, accepted_on: str | None = None) -> Path:
     receipt = json.loads(RECEIPT.read_text())
     current_source = source_snapshot()
     if current_source != receipt["source"]:
@@ -166,6 +167,13 @@ def package(output: Path | None = None) -> Path:
     version = next(iter(versions))
     if not all(c.isalnum() or c in ".-_" for c in version):
         raise ValueError("Unsafe version string")
+    if release:
+        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            raise ValueError("A stable release requires a numeric major.minor.patch version")
+        if not accepted_on or date.fromisoformat(accepted_on).isoformat() != accepted_on:
+            raise ValueError("A stable release requires --accepted-on YYYY-MM-DD for owner-reported acceptance")
+    elif accepted_on is not None:
+        raise ValueError("--accepted-on requires --release")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     destination = output or ROOT / "dist" / f"cerberus-sentinel-{version}-{timestamp}"
     destination = destination.resolve()
@@ -187,8 +195,10 @@ def package(output: Path | None = None) -> Path:
             lines.append(f"0x{image['offset']:x} {filename}")
             del image["source"]
         (directory / "flash_args.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    manifest = {"format": 1, "product": "Cerberus Sentinel", "status": "development candidate",
-                "hardware_validation": "not performed by packaging",
+    status = "stable" if release else "development candidate"
+    validation = f"Owner-reported acceptance on {accepted_on}; packaging performs no hardware tests" if release else "not performed by packaging"
+    manifest = {"format": 1, "product": "Cerberus Sentinel", "status": status,
+                "hardware_validation": validation,
                 "built_utc": receipt["built_utc"], "packaged_utc": timestamp,
                 "platformio": receipt["platformio"], "source": current_source, "targets": targets}
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -197,9 +207,9 @@ def package(output: Path | None = None) -> Path:
     for name in ("WATCH_SIGNATURES.md", "WATCH_THIRD_PARTY_NOTICES.md"):
         shutil.copy2(ROOT / "docs" / name, destination / name)
     (destination / "README.txt").write_text(
-        "CERBERUS SENTINEL — DEVELOPMENT CANDIDATE\n\n"
+        f"CERBERUS SENTINEL {version} — {status.upper()}\n\n"
         "Production N16R2 S3 + onboard C5 (2 MB flash budget).\n"
-        "This package was compiled and checked on a computer; production-board testing is required.\n"
+        f"{validation}.\n"
         "S3, C5 and bridge are a matched set. Preserve their separate chip destinations.\n"
         "C5 bootloader starts at 0x2000. Never write a C5 image to the S3.\n"
         "flash_args.txt describes each target's actual image offsets; it is NOT a one-step installer.\n"
@@ -215,13 +225,15 @@ def package(output: Path | None = None) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, help="New directory to create (never overwritten)")
+    parser.add_argument("--release", action="store_true", help="Package a stable release explicitly approved by the owner")
+    parser.add_argument("--accepted-on", help="Owner-reported acceptance date (YYYY-MM-DD); required with --release")
     args = parser.parse_args()
     try:
-        destination = package(args.output)
+        destination = package(args.output, release=args.release, accepted_on=args.accepted_on)
     except (OSError, ValueError, KeyError) as error:
         print(f"Cannot package: {error}", file=sys.stderr)
         return 1
-    print(f"Verified development package: {destination}")
+    print(f"Verified {'release' if args.release else 'development'} package: {destination}")
     return 0
 
 

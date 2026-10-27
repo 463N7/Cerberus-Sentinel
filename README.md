@@ -11,8 +11,9 @@ The firmware source repository remains private. Only the web application,
 release metadata, firmware binaries, and redistribution notices are published
 in the separate [Cerberus-Flasher repository](https://github.com/463N7/Cerberus-Flasher).
 
-**Development preview:** the browser workflow and revised automatic USB handoff
-still require a complete physical-board test. BOOT/RESET recovery instructions
+**Version 1.0.0:** the owner reported successful testing of the existing feature
+build and approved the first production release on **2026-10-27**. That report
+precedes the rebuilt, versioned v1 package. BOOT/RESET recovery instructions
 are included. See [web installer maintenance](docs/WEB_FLASHER.md) and the
 [bridge control protocol](docs/C5_USB_BRIDGE.md).
 
@@ -23,8 +24,8 @@ An original defensive wireless companion for production Cerberus, built on
 the working Cerberus Base firmware. A three-headed cyborg Cerberus guides
 you through Wi-Fi, Bluetooth LE, and 802.15.4 on the 320 × 480 touchscreen.
 
-**0.5.0-dev — development candidate.** Physical-board validation is required
-before designating a production release.
+**1.0.0 — production release.** Update both onboard processors using the matched
+release images.
 
 ## What is implemented
 
@@ -218,6 +219,24 @@ not drive GPIO38 as a prototype SD test pin. Radio observations are bounded
 and user initiated. Connections and the local web AP are separate visible
 actions. Settings can mask addresses; this does not anonymize network names.
 
+## Privacy and local data
+
+- The USB installer keeps board identifiers and installation progress in this
+  browser. Saved installation reports include board MAC addresses and diagnostic
+  output; keep them private when sharing troubleshooting information.
+- Cerberus does not automatically upload captured observations. Watch history
+  stays in memory for the current power session; saved reports and other SD files
+  remain on the card until you copy or delete them.
+- The on-device dashboard uses HTTP over its password-protected WPA2 access
+  point. Its separate browser password controls access, but the dashboard does
+  not provide HTTPS encryption.
+- NVS settings and SD files are not encrypted at rest. Physical access to the
+  board or card can expose saved information. Address masks are pseudonyms,
+  not anonymity; names and other broadcast details may still identify devices.
+- Explicitly selected network diagnostics contact `example.com` for DNS/HTTPS
+  checks and `pool.ntp.org` for a time check. These are network requests made by
+  that tool, not automatic uploads of scan captures.
+
 ## Build firmware
 
 Open this folder in VS Code or use a terminal with PlatformIO installed.
@@ -228,8 +247,9 @@ the matching images. It does not upload firmware.
 python tools/build_sentinel.py --target all --package
 ```
 
-The package in `dist/` includes matching versions, generated flash layouts,
-source hashes, and image checksums. See
+The package in `dist/` is a candidate with matching versions, generated flash
+layouts, source hashes, and image checksums. Creating an accepted release is an
+explicit packaging step; the version label alone does not qualify a new build. See
 [Build and recovery](docs/SENTINEL_BUILD.md) for setup and flashing.
 
 ## Project map

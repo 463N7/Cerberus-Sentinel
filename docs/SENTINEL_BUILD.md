@@ -1,13 +1,14 @@
 # Build and recovery
 
-For **0.5.0-dev**, update both the S3 and onboard C5. The C5 must report firmware
+For **1.0.0**, update both the S3 and onboard C5. The C5 must report firmware
 revision **31**. Watch uses bounded raw BLE advertisements, decoded broadcast
 snapshots, and activity measurements with capability and generation checks.
 
-Cerberus Sentinel is a **development candidate** based on the accepted working
-Cerberus Base firmware. A successful computer build does not establish that
-the new screens, production PSRAM configuration, or new workflows have been
-validated on a physical production board.
+Cerberus Sentinel **1.0.0** is the first production release. The owner reported
+successful testing of the existing feature build and approved the release on
+**2026-10-27**. That acceptance predates the rebuilt, versioned v1 package;
+it is not a claim that the new package received a separate physical test.
+Automated build and integrity checks are recorded separately.
 
 ## Hardware profile
 
@@ -75,7 +76,7 @@ python tools/build_sentinel.py --target c5
 python tools/build_sentinel.py --target bridge
 ```
 
-Build a matched set and produce a development package:
+Build a matched set and produce a candidate package:
 
 ```powershell
 python tools/build_sentinel.py --target all --package
@@ -87,11 +88,24 @@ edits or dependency resolution during a build invalidate that receipt; run
 the command again once edits finish. Build outputs are under `.pio/` and
 `c5_firmware/.pio/`.
 
-To package an unchanged matched set without recompiling:
+To package an unchanged matched set as a candidate without recompiling:
 
 ```powershell
 python tools/package_sentinel.py
 ```
+
+For an accepted production release, explicitly record the acceptance date.
+For v1.0.0, the owner approved the tested feature build on 2026-10-27:
+
+```powershell
+python tools/build_sentinel.py --target all
+python tools/package_sentinel.py --release --accepted-on 2026-10-27 --output dist/cerberus-sentinel-1.0.0
+```
+
+For later releases, use their actual owner acceptance date (`YYYY-MM-DD`) and
+a new output directory. Ordinary packaging remains a candidate even when the
+compiled version has no development suffix. Packaging records acceptance; it
+does not perform a physical board test. Web export inherits the package status.
 
 The new `dist/cerberus-sentinel-.../` directory contains separate `s3/`, `c5/`,
 and `bridge/` bootloader, partition and application images; actual flash
@@ -101,7 +115,7 @@ images, a mismatched version, wrong memory profiles, invalid partition MD5,
 overlapping flash regions, or an oversized application. Existing output
 directories are never overwritten. The package is not an automatic installer.
 
-Watch 0.5 requires the matched C5 firmware revision 31 for independent Remote ID /
+Sentinel 1.0.0 requires the matched C5 firmware revision 31 for independent Remote ID /
 Pwnagotchi capture and Bluetooth activity measurements. Its C5 profile enables
 passive BLE extended scans on 1M and coded PHYs, with a 255-byte receive bound;
 periodic synchronization and periodic advertising remain disabled. An older
@@ -139,8 +153,7 @@ preserving a backup of that tool file. The selected C5 app slot is erased as
 part of the explicit flash operation.
 
 The helper ends with an esptool watchdog reset after restoring the application.
-The complete revised USB handoff still requires physical-board validation and
-may require BOOT + RESET. If a successfully written S3 remains in the loader, this command
+USB handoff may require BOOT + RESET. If a successfully written S3 remains in the loader, this command
 reads its volatile boot register and then performs the verified reset:
 
 ```powershell
@@ -162,12 +175,16 @@ no OTA rollback slot and no automatic dual-processor update/rollback system.
 Recover through the USB/ROM bootloader and reinstall the matched S3/C5 pair.
 Existing NVS can contain user settings; build/package tools do not export it.
 
-## Physical acceptance still required
+## Release acceptance and future updates
 
-Before treating a candidate as a shipping release, exercise the production
+The owner reported successful testing of the existing feature build and approved
+v1.0.0 on 2026-10-27, before the rebuilt, versioned package was produced.
+Retain the published matched package as the v1 recovery reference.
+
+For future firmware or hardware revisions, exercise the production
 board: startup and PSRAM detection, display/touch alignment, each radio tool,
 repeated mode changes, lesson progress/reboot, baseline persistence, SD
 mount/removal/export, USB ownership transfer, local web start/stop, and
 S3/C5 interrupted-flash recovery. Run extended operation with the actual
 power supply and record heap minima. Preserve a known working matched firmware
-package as the recovery reference.
+package as the recovery reference for each accepted revision.

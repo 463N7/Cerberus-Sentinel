@@ -119,9 +119,9 @@ $('primary').addEventListener('click',run);
 $('consent').addEventListener('change',render);
 $('resume-c5').addEventListener('click',()=>{if(busy || !session)return;session.stage='c5';session.checks=null;$('check-results').hidden=true;save();render();status('Connect the same board with its bridge running. This step programs the C5.');});
 $('restore-s3').addEventListener('click',()=>{if(busy || !session)return;session.stage='s3';session.checks=null;$('check-results').hidden=true;save();render();status('S3 recovery selected. This does not install or verify the C5.');});
-$('restart').addEventListener('click',()=>{if(busy || !release)return;session=freshSession(release.manifest.releaseId);$('consent').checked=false;$('check-results').hidden=true;save();render();progress(0,'Ready for a new board');status('Connect one Cerberus to begin.');});
+$('restart').addEventListener('click',()=>{if(busy || !release)return;session=freshSession(release.manifest.releaseId);lines.length=0;$('log').textContent='';$('consent').checked=false;$('check-results').hidden=true;save();render();progress(0,'Ready for a new board');status('Connect one Cerberus to begin.');});
 $('download-log').addEventListener('click',()=>{
-  const report = {installerVersion:'0.1.0',savedAt:new Date().toISOString(),release:release?.manifest.releaseId || null,session:session || null,log:lines,qualification:'Browser checks do not replace physical display, touch and radio acceptance tests.'};
+  const report = {installerVersion:'1.0.0',savedAt:new Date().toISOString(),release:release?.manifest.releaseId || null,session:session || null,log:lines,qualification:'Browser checks do not replace physical display, touch and radio acceptance tests.'};
   const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download=`cerberus-install-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
