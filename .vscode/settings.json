@@ -1,9 +1,0 @@
-{
-  "files.associations": { "*.h": "c" },
-  "files.exclude": { "**/.pio": true, "**/__pycache__": true },
-  "search.exclude": { "**/.pio": true, "**/managed_components": true, "**/dist": true },
-  "C_Cpp.default.compileCommands": "${workspaceFolder}/.pio/build/s3-main/compile_commands.json",
-  "C_Cpp.default.cStandard": "c17",
-  "editor.formatOnSave": false,
-  "terminal.integrated.cwd": "${workspaceFolder}"
-}

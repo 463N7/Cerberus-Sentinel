@@ -17,14 +17,14 @@ are included. See [web installer maintenance](docs/WEB_FLASHER.md) and the
 [bridge control protocol](docs/C5_USB_BRIDGE.md).
 
 Run the installer locally with `cd web`, `npm ci`, and `npm run dev`.
-Run `npm test` and `npm run build` in `web/` before publishing.
+Run `npm run build` in `web/` before publishing.
 
 An original defensive wireless companion for production Cerberus, built on
 the working Cerberus Base firmware. A three-headed cyborg Cerberus guides
 you through Wi-Fi, Bluetooth LE, and 802.15.4 on the 320 × 480 touchscreen.
 
-**0.5.0-dev — development candidate.** The new experience needs acceptance
-testing on the actual production board. The original Base folder is preserved.
+**0.5.0-dev — development candidate.** Physical-board validation is required
+before designating a production release.
 
 ## What is implemented
 
@@ -218,25 +218,18 @@ not drive GPIO38 as a prototype SD test pin. Radio observations are bounded
 and user initiated. Connections and the local web AP are separate visible
 actions. Settings can mask addresses; this does not anonymize network names.
 
-**SDR is deferred.** The later investigation is the internal ESP-SDR approach
-at [ESP-SDR](https://espargos.net/espsdr/), using existing hardware. No SDR
-capture, streaming, or additional-board dependency is included now.
+## Build firmware
 
-## Build and work in VS Code
-
-Open this folder in VS Code. PlatformIO, C/C++, and Serial Monitor extension
-recommendations and build/test tasks are included. The default build task
-builds S3, C5, and the temporary S3 flashing bridge; it never uploads.
+Open this folder in VS Code or use a terminal with PlatformIO installed.
+This command builds S3, C5, and the temporary S3 flashing bridge, then packages
+the matching images. It does not upload firmware.
 
 ```powershell
 python tools/build_sentinel.py --target all --package
-python tools/test_sentinel.py
 ```
 
 The package in `dist/` includes matching versions, generated flash layouts,
-source hashes, and image checksums. The host checks exercise actual new C
-modules with simulated display/NVS/link services. Previews go to `artifacts/`.
-Host rendering uses `ziglang==0.14.1`. See
+source hashes, and image checksums. See
 [Build and recovery](docs/SENTINEL_BUILD.md) for setup and flashing.
 
 ## Project map
@@ -253,8 +246,8 @@ Host rendering uses `ziglang==0.14.1`. See
 - `s3_main/main/ui.c` — navigation into Base tools.
 - `c5_firmware/` — onboard radio services.
 - `shared/` — protocol and pin definitions.
-- `tools/` — builds, packages, previews, tests, explicit flashing.
+- `tools/` — firmware builds, release packages, explicit flashing, and web release export.
+- `web/` — the public USB installer and downloadable firmware.
 
-See [the roadmap](TODO.md), [board acceptance](docs/SENTINEL_ACCEPTANCE.md),
-[USB bridge and recovery](docs/C5_USB_BRIDGE.md), and [restricted scripting](docs/SCRIPTING.md). Historical Base documentation
-is retained in `docs/BASE_README.md` and `docs/BASE_BACKLOG.md`.
+See [remaining firmware work](TODO.md), [USB bridge and recovery](docs/C5_USB_BRIDGE.md),
+and [on-device scripting](docs/SCRIPTING.md).

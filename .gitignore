@@ -24,3 +24,14 @@ node_modules/
 docs/FIRST_BOARD_FLASH.md
 docs/VERIFICATION*.md
 docs/TOOLS_AUDIT.md
+# Keep local development helpers outside the firmware/flasher repository.
+/.vscode/
+/tools/test*.py
+/tools/preview*.py
+/tools/stress*.py
+/tools/tests/
+/tools/fixtures/
+/web/test/
+/docs/BASE_BACKLOG.md
+/docs/BASE_README.md
+/docs/SENTINEL_ACCEPTANCE.md

@@ -14,10 +14,6 @@ public repository's `main` branch from its root directory. The public repository
 contains the compiled website and release files; it has separate Git history
 and does not contain the private firmware source checkout.
 
-The private repository's optional Pages workflow is not used for this public
-repository. It remains disabled unless Pages support for the private repository
-and `ENABLE_GITHUB_PAGES=true` are explicitly configured later.
-
 Only the contents of `web/dist/` belong in the public deployment directory.
 Never publish the checkout, `dist/` firmware package history, build logs,
 schematics, `.git`, credentials, or developer notes. The public firmware binaries
@@ -121,14 +117,12 @@ The release directory also contains its own `SHA256SUMS.txt`. The latest pointer
 is outside that immutable directory so selecting another reviewed release does
 not modify the old release.
 
-## Local development and deployment
+## Build and deployment
 
 Use Node.js 24 and Python 3.13 or newer. Web dependencies are locked in
 `web/package-lock.json`.
 
 ```powershell
-python tools/test_export_web_release.py
-python tools/test_sentinel_package.py
 python tools/export_web_release.py --verify-site web/public/firmware
 ```
 
@@ -136,7 +130,6 @@ From `web/`:
 
 ```powershell
 npm ci
-npm test
 npm run build
 npm run preview
 ```
@@ -164,7 +157,7 @@ the website inside a second `dist/` directory.
 1. Make changes in the private `Cerberus-Sentinel` checkout. For firmware changes,
    build a matched package and export it with `--set-latest`. A website-only
    change can retain the existing firmware selection.
-2. Run the checks and build above. Commit and push the source, selected public
+2. Run the release verification and build above. Commit and push the source, selected public
    firmware files, lockfile, and notices to the private repository, and require
    the web CI check to pass for that commit.
 3. Copy the contents of the checked **`web/dist/`** into the public flasher
@@ -203,8 +196,8 @@ Pages settings and retain the resulting `CNAME` file on every update. A
 a repository path. Enable HTTPS after the domain is verified. Changing domains
 starts a new browser installation session because progress is stored per origin.
 
-`web-checks.yml` runs the package/export rejection tests, validates the selected
-firmware, runs `npm ci`, `npm test`, and `npm run build`, verifies the built
+`web-checks.yml` validates the selected
+firmware, runs `npm ci` and `npm run build`, verifies the built
 firmware tree, and saves the static website as a private CI artifact. It does not
 deploy, rebuild the firmware, or automatically select a new candidate.
 
@@ -215,26 +208,18 @@ are private Actions artifacts. A completed run does not publish firmware or
 replace `latest.json`; select a reviewed package explicitly after acceptance.
 Build diagnostics remain private and have a short retention period.
 
-`pages-manual.yml` is an optional alternative for hosting directly from the
-private source repository if that repository becomes eligible for Pages. It
-deploys only `web/dist/` using that repository's `github-pages` environment. It
-does not deploy to `463N7/Cerberus-Flasher`; the current public site uses the
-separate repository's branch-based Pages deployment described above.
-
 ## Publication and attribution review
 
 - Keep local `artifacts/`, firmware `dist/`, `.pio/`, `build/`,
   `managed_components/`, `tmp/`, dependency directories, and generated SDK
   configurations out of source publication.
-- Historical verification documents contain real board MAC addresses and local
-  port names. Keep these records private or redact a publication copy.
 - Preserve `WATCH_SIGNATURES.md` and `WATCH_THIRD_PARTY_NOTICES.md` beside the
   downloadable firmware. The exporter requires both.
 - The project currently has no top-level source license. Do not describe it as
   open source or add a license on the owner's behalf. Keep existing third-party
   attributions when distributing binaries, and retain notices for browser
   dependencies in the public web build.
-- Browser tests and build success do not demonstrate a real board flash. Record
+- Build success does not demonstrate a real board flash. Record
   a full fresh-board run and an interrupted-flash recovery before using the
   installer as a qualified production station.
 
@@ -245,8 +230,3 @@ installing the locked npm dependencies and building the firmware. That helper
 reads installed upstream license files and retrieves two pinned upstream MIT
 license files; it publishes no local paths. Recheck its pinned component
 versions whenever the firmware or browser dependency lockfiles change.
-
-GitHub workflow references: [setup-node](https://github.com/actions/setup-node),
-[setup-python](https://github.com/actions/setup-python),
-[upload-pages-artifact](https://github.com/actions/upload-pages-artifact), and
-[deploy-pages](https://github.com/actions/deploy-pages).

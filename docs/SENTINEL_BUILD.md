@@ -7,7 +7,7 @@ snapshots, and activity measurements with capability and generation checks.
 Cerberus Sentinel is a **development candidate** based on the accepted working
 Cerberus Base firmware. A successful computer build does not establish that
 the new screens, production PSRAM configuration, or new workflows have been
-validated on a physical production board. SDR is deferred.
+validated on a physical production board.
 
 ## Hardware profile
 
@@ -18,7 +18,7 @@ validated on a physical production board. SDR is deferred.
 | `s3-c5-bridge` | Temporary S3 USB-to-C5 flashing bridge | Same S3 factory slot |
 
 The C5 profile is a conservative firmware budget, not an assertion about the
-unverified module marking. No GPS, expansion radio bank, or SDR expansion board
+unverified module marking. No GPS, expansion radio bank, or expansion board
 is required. The S3 retains the Base flash mode (DIO, 80 MHz); its PSRAM uses
 quad mode. These are separate buses/settings. **Do not enable octal PSRAM:**
 GPIO35–37 are used by the microSD interface.
@@ -52,11 +52,10 @@ The production flag leaves GPIO38 free. The display remains ST7796 on SPI2
 MOSI11, MISO13, CS10), READY44, EN21 and BOOT40. microSD is SDMMC 1-bit
 (CLK36, CMD37, DAT035). Preserve the shared pin definitions when adding tools.
 
-## Tools and VS Code
+## Build tools
 
-Open this folder in VS Code. The recommended extensions are PlatformIO IDE,
-C/C++, and Serial Monitor. The ordinary build shortcut runs the task
-**Sentinel: Build matched S3 + C5 + bridge**. It does not upload firmware.
+Run the commands below from this folder, including from the VS Code terminal.
+Build and packaging commands do not upload firmware.
 
 The working toolchain is PlatformIO Core **6.1.19**, platform
 `espressif32@7.0.1`, and ESP-IDF **6.0.1** (`framework-espidf@4.60001.0`).
@@ -102,22 +101,6 @@ images, a mismatched version, wrong memory profiles, invalid partition MD5,
 overlapping flash regions, or an oversized application. Existing output
 directories are never overwritten. The package is not an automatic installer.
 
-## Host checks and screen previews
-
-Install the host C compiler used by the checks, then run all host check groups:
-
-```powershell
-python -m pip install ziglang==0.14.1
-python tools/test_sentinel.py
-```
-
-The checks cover protocol vectors, lesson navigation/progress/storage failures,
-atomic baseline comparisons, web resource cleanup/retry, package corruption and
-staleness gates, and screen/hit-area bounds. The display checks render real C
-with the device font to PNGs in `artifacts/sentinel-dashboard/` and
-`artifacts/sentinel-screens/`. NVS, SPI, display, and ESP resource services are
-simulated; these checks do not establish electrical or live-radio behavior.
-
 Watch 0.5 requires the matched C5 firmware revision 31 for independent Remote ID /
 Pwnagotchi capture and Bluetooth activity measurements. Its C5 profile enables
 passive BLE extended scans on 1M and coded PHYs, with a 255-byte receive bound;
@@ -155,11 +138,9 @@ It adjusts the local C5 esptool target to the Base's 4 KiB write block size,
 preserving a backup of that tool file. The selected C5 app slot is erased as
 part of the explicit flash operation.
 
-On the first board flash, USB RTS reset left the S3 in its download loader.
-An esptool watchdog reset started Sentinel successfully. The helper now ends
-with that reset after restoring the application. The complete revised helper
-has not yet been exercised end to end; USB handoff may still require physical
-BOOT + RESET. If a successfully written S3 remains in the loader, this command
+The helper ends with an esptool watchdog reset after restoring the application.
+The complete revised USB handoff still requires physical-board validation and
+may require BOOT + RESET. If a successfully written S3 remains in the loader, this command
 reads its volatile boot register and then performs the verified reset:
 
 ```powershell
@@ -188,5 +169,5 @@ board: startup and PSRAM detection, display/touch alignment, each radio tool,
 repeated mode changes, lesson progress/reboot, baseline persistence, SD
 mount/removal/export, USB ownership transfer, local web start/stop, and
 S3/C5 interrupted-flash recovery. Run extended operation with the actual
-power supply and record heap minima. Preserve the known working Base images
-as the recovery reference. SDR is a later milestone after this core is stable.
+power supply and record heap minima. Preserve a known working matched firmware
+package as the recovery reference.

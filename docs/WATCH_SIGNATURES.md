@@ -3,7 +3,6 @@
 Catalog reviewed 2026-10-13; expanded protocol review 2026-10-14; plain-language label and explanation update 2026-10-15.
 
 Implementation: `s3_main/main/sentinel_watch_detect.c` / `.h` and `shared/sentinel_watch_protocol.c` / `.h`.
-Verification: `python tools/test_sentinel_watch_detect.py`.
 Redistribution notices: [WATCH_THIRD_PARTY_NOTICES.md](WATCH_THIRD_PARTY_NOTICES.md).
 
 ## What a match means
@@ -177,13 +176,11 @@ Pinned files under `crates/buttplug_server_device_config/device-config/protocols
 
 [Argus](https://github.com/kevwillow/argus-db) was used to find original research and registry references. Its current licenses were checked: code AGPL-3.0-or-later, compiled database ODbL-1.0, documentation CC BY-SA 4.0. It is **not an MIT database**. No Argus database/export subset, confidence score, source excerpt collection, code, or documentation text is distributed here. The installed rules were independently checked against the primary sources listed above.
 
-No SquachWatch / SquatchWatch code, signature table, artwork, character, or asset is imported. Cerberus's parser, decision logic, evidence wording, tests, and user interface integration are its own implementation.
+No SquachWatch / SquatchWatch code, signature table, artwork, character, or asset is imported. Cerberus's parser, decision logic, evidence wording, and user interface integration are its own implementation.
 
-## Tests and future changes
+## Adding signatures
 
-The host suite compiles the production C implementation and checks positive format fixtures; wrong lengths, companies, subtypes, UUID endianness and Bluetooth base encodings; strict Flock names and SSID suffixes; generic-name and shared-vendor negatives; cached-name separation; full-packet validation; null and overlength input; and 32,000 deterministic packet-boundary cases. On Windows the input ends at a protected memory page so overreads fault immediately. Test identifiers and payloads are synthetic and do not contain captured device keys or deployment locations.
-
-Before adding a rule, record the original source and revision, preserve its license notices, specify exactly which broadcast evidence is required, and add a realistic positive fixture plus nearby false-positive cases. Distinguish a GATT service known only after connecting from one actually present in advertisements. Keep claims at the level supported by the source. A renamed or spoofed broadcast must never be described as authenticated proof.
+Before adding a rule, record the original source and revision, preserve its license notices, and specify exactly which broadcast evidence is required. Distinguish a GATT service known only after connecting from one actually present in advertisements. Keep claims at the level supported by the source. A renamed or spoofed broadcast must never be described as authenticated proof.
 
 
 ## Primary sources for the expanded families
@@ -221,7 +218,3 @@ Revision `52d5685f2cea1ada86e9c28b16dc912013c68b71`: [Wi-Fi constants](https://g
 ### ODID — official OpenDroneID wire definitions
 
 [Core wire definitions](https://github.com/opendroneid/opendroneid-core-c/blob/849c03adbe0cdd68997a462fafab397edcfe53f3/libopendroneid/opendroneid.h), [Wi-Fi framing](https://github.com/opendroneid/opendroneid-core-c/blob/849c03adbe0cdd68997a462fafab397edcfe53f3/libopendroneid/wifi.c), [Wi-Fi structures](https://github.com/opendroneid/opendroneid-core-c/blob/849c03adbe0cdd68997a462fafab397edcfe53f3/libopendroneid/odid_wifi.h), revision `849c03adbe0cdd68997a462fafab397edcfe53f3`; [official BLE framing](https://github.com/opendroneid/transmitter-linux/blob/6852afd0d4bed0d139b9dac3cd3a45eb595e30f0/bluetooth.c), revision `6852afd0d4bed0d139b9dac3cd3a45eb595e30f0`. Both repositories use Apache-2.0. This is an independent receive-only subset using explicit byte reads, not a bundled OpenDroneID library or transmitter. No third-party source code was imported. It is not a certification or a claim to implement every revision of ASTM/ASD-STAN Remote ID.
-
-### Expanded host verification
-
-`python tools/test_sentinel_watch_detect.py` exercises all previous rules, new-family positives/near negatives, four Flipper color variants, Samsung structural negatives, all supported Eddystone frames and AltBeacon. The protocol fixture checks legacy and extended BLE, a nine-message pack, Wi-Fi beacon and NAN framing, ID/location/altitude sentinels and bounds, malformed/trailing fields, supported counter rollover, 255 PwnGrid IE chunk sizes, strict JSON negatives, and 12,000 guarded protocol-buffer cases. The original classifier also retains its 32,000 guarded packet-boundary cases. Fixtures are synthetic and no claim of live device validation is made by these tests.

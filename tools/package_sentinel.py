@@ -188,7 +188,7 @@ def package(output: Path | None = None) -> Path:
             del image["source"]
         (directory / "flash_args.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     manifest = {"format": 1, "product": "Cerberus Sentinel", "status": "development candidate",
-                "hardware_validation": "not performed by packaging", "sdr": "deferred",
+                "hardware_validation": "not performed by packaging",
                 "built_utc": receipt["built_utc"], "packaged_utc": timestamp,
                 "platformio": receipt["platformio"], "source": current_source, "targets": targets}
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -198,7 +198,7 @@ def package(output: Path | None = None) -> Path:
         shutil.copy2(ROOT / "docs" / name, destination / name)
     (destination / "README.txt").write_text(
         "CERBERUS SENTINEL — DEVELOPMENT CANDIDATE\n\n"
-        "Production N16R2 S3 + onboard C5 (2 MB flash budget). SDR is deferred.\n"
+        "Production N16R2 S3 + onboard C5 (2 MB flash budget).\n"
         "This package was compiled and checked on a computer; production-board testing is required.\n"
         "S3, C5 and bridge are a matched set. Preserve their separate chip destinations.\n"
         "C5 bootloader starts at 0x2000. Never write a C5 image to the S3.\n"

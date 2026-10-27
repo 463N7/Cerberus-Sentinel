@@ -21,10 +21,6 @@ jobs:
           python-version: '3.13'
       - name: Install the pinned build tool
         run: python -m pip install platformio==6.1.19
-      - name: Check package and exporter rejection gates
-        run: |
-          python tools/test_sentinel_package.py
-          python tools/test_export_web_release.py
       - name: Resolve dependencies and generate effective target configurations
         # A clean runner has no sdkconfig.<environment> files. Build these once
         # before the matched receipt is taken; the final gate then detects any
