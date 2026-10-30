@@ -19,7 +19,7 @@ assert "csi_live_tick(current_page == UI_PAGE_WIFI && wifi_mode == UI_WIFI_MODE_
 env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(out / "zig-cache"))
 exe = out / ("csi-live-ui-check.exe" if os.name == "nt" else "csi-live-ui-check")
 subprocess.run([
-    sys.executable, "-m", "ziglang", "cc", "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror",
+    sys.executable, "-m", "ziglang", "cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-O1", "-Wall", "-Wextra", "-Werror",
     "-I", str(root / "tools/host_checks/stubs"), "-I", str(root / "shared"), "-I", str(root / "s3_main/main"),
     str(root / "tools/host_checks/csi_live_ui_check.c"), str(root / "s3_main/main/csi_session.c"),
     str(root / "s3_main/main/csi_ui.c"), str(root / "shared/csi_motion_model.c"), "-lm", "-o", str(exe),

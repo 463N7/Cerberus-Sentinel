@@ -25,7 +25,7 @@ start = source.index("    case CERBERUS_SPI_COMMAND_WIFI_RELATION_STATUS:")
 env = dict(os.environ, ZIG_GLOBAL_CACHE_DIR=str(out / "zig-cache"))
 for stem in ("wifi_relation_observation_check", "wifi_relation_c5_check"):
     exe = out / (stem + (".exe" if os.name == "nt" else ""))
-    subprocess.run([sys.executable, "-m", "ziglang", "cc", "-std=c11", "-O1",
+    subprocess.run([sys.executable, "-m", "ziglang", "cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-O1",
         "-Wall", "-Wextra", "-Werror", "-I", str(out), "-I", str(root / "shared"),
         str(root / "tools/host_checks" / (stem + ".c")), "-o", str(exe)], check=True, env=env)
     subprocess.run([str(exe)], check=True, env=env)
