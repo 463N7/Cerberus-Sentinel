@@ -61,7 +61,9 @@ typedef enum {
  * Rendering is synchronous on the UI task; caller presents the composed frame.
  * Evidence/Details target: x8,y348,w304,h64, enabled only with has_details.
  * Buttons y426,h44: Back x8,w68; Pause/Resume x84,w68; History x160,w68;
- * Demo/Next x236,w76. Demo disables Pause and History. Gaps never activate.
+ * Options/Next x236,w76 (legacy ACTION_DEMO id). Demo disables Pause and
+ * History. Gaps never activate. Live Recon uses original pixel art; the
+ * separate scene gallery retains the original illustrated Sentinel scenes.
  */
 esp_err_t sentinel_watch_view_draw(const sentinel_watch_view_t *view, uint32_t now_ms);
 esp_err_t sentinel_watch_view_update(const sentinel_watch_view_t *view, uint32_t now_ms);

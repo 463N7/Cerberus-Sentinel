@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include "sdmmc_cmd.h"
+#include "storage_report_limits.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,11 +15,13 @@ extern "C" {
 #define CERBERUS_STORAGE_MOUNT_PATH "/sdcard"
 #define CERBERUS_STORAGE_NAME_MAX 256
 #define CERBERUS_STORAGE_PATH_MAX 512
-#define CERBERUS_STORAGE_DIAGNOSTIC_MAX_BYTES 4096
 #define CERBERUS_STORAGE_BENCHMARK_BYTES (512U * 1024U)
 #define CERBERUS_STORAGE_FIRMWARE_PATH "/CERBERUS/FIRMWARE"
 #define CERBERUS_STORAGE_SCRIPTS_PATH "/CERBERUS/SCRIPTS"
 #define CERBERUS_STORAGE_FIRMWARE_MAX_BYTES (4U * 1024U * 1024U)
+#define CERBERUS_STORAGE_WIFI_CAPTURE_MAX_BYTES (64U * 1024U * 1024U)
+#define CERBERUS_STORAGE_WARDRIVE_MAX_BYTES (64U * 1024U * 1024U)
+#define CERBERUS_STORAGE_WARDRIVE_PATH "/CERBERUS/WARD"
 
 typedef struct {
     bool mounted;
@@ -66,6 +69,15 @@ typedef struct {
 esp_err_t cerberus_storage_mount(void);
 esp_err_t cerberus_storage_unmount(void);
 bool cerberus_storage_is_mounted(void);
+/* Read under the storage mutex. Successful mount/unmount changes the token;
+ * USB ownership, an unmounted card or a busy mutex returns an error. A caller
+ * doing multiple chunk reads compares tokens before/after and also validates
+ * file identity. This does not hold a filesystem lease or hash file contents. */
+esp_err_t cerberus_storage_get_read_epoch(uint32_t *epoch);
+/* UI cache guard: the same ownership/token check without waiting or creating
+ * a mutex. Returns TIMEOUT while storage is busy, INVALID_STATE before mount
+ * initialization or while unavailable; every failure clears the output. */
+esp_err_t cerberus_storage_try_get_read_epoch(uint32_t *epoch);
 cerberus_storage_owner_t cerberus_storage_get_owner(void);
 esp_err_t cerberus_storage_reserve_for_usb(void);
 esp_err_t cerberus_storage_release_from_usb(void);
@@ -105,6 +117,34 @@ esp_err_t cerberus_storage_write_wifi_defense_report(
     size_t data_length,
     char *file_name,
     size_t file_name_capacity);
+esp_err_t cerberus_storage_write_portal_report(
+    const char *data,
+    size_t data_length,
+    char *file_name,
+    size_t file_name_capacity);
+/* One streaming PCAPNG capture at a time. An open capture keeps the SD card
+ * owned by firmware; USB handoff and unmount return INVALID_STATE until finish.
+ * Records append to a .TMP file and finish atomically publishes .PCAPNG. */
+esp_err_t cerberus_storage_wifi_capture_begin(const uint8_t *header, size_t header_length);
+esp_err_t cerberus_storage_wifi_capture_append(const uint8_t *record, size_t record_length);
+esp_err_t cerberus_storage_wifi_capture_finish(bool keep,
+    char *file_name, size_t file_name_capacity, uint64_t *bytes_written);
+/* Wardriving holds one SD lease with lazy UNLOC/WIGLE append streams. USB
+ * handoff remains blocked until both streams close and the session ends.
+ * Only a stream with no write/sync failure can publish CSV. Failed or
+ * interrupted streams retain recoverable .TMP files, including a partial row. */
+esp_err_t cerberus_storage_wardrive_session_begin(void);
+esp_err_t cerberus_storage_wardrive_session_finish(void);
+esp_err_t cerberus_storage_wardrive_begin(const char *header, size_t header_length);
+esp_err_t cerberus_storage_wardrive_append(const char *row, size_t row_length);
+esp_err_t cerberus_storage_wardrive_sync(void);
+esp_err_t cerberus_storage_wardrive_finish(bool keep,
+    char *file_name, size_t file_name_capacity, uint64_t *bytes_written);
+esp_err_t cerberus_storage_wardrive_wigle_begin(const char *header, size_t header_length);
+esp_err_t cerberus_storage_wardrive_wigle_append(const char *row, size_t row_length);
+esp_err_t cerberus_storage_wardrive_wigle_sync(void);
+esp_err_t cerberus_storage_wardrive_wigle_finish(bool keep,
+    char *file_name, size_t file_name_capacity, uint64_t *bytes_written);
 esp_err_t cerberus_storage_write_qr_bmp(
     const uint8_t *modules,
     uint16_t module_count,

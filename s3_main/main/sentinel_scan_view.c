@@ -22,7 +22,8 @@
 typedef struct {
     sentinel_scan_view_t view;
     char subtitle[51], count_label[19], message[51], hint[51];
-    char names[4][19], details[4][38], badges[4][34];
+    char names[4][33], details[4][38], badges[4][34], tools_label[13], sort_label[13];
+    char age_label[13];
     uint32_t frame;
     bool valid;
 } render_cache_t;
@@ -132,7 +133,15 @@ static const char *count_label(const sentinel_scan_view_t *view)
 
 static unsigned summary_count(const sentinel_scan_view_t *view)
 {
+    if(view->selection_mode)return view->selection_count;
     return view->kind == SENTINEL_VIEW_ENERGY ? energy_count(view) : view->total_count;
+}
+
+static bool has_age_control(const sentinel_scan_view_t *view)
+{
+    return (view->kind == SENTINEL_VIEW_BLE || view->kind == SENTINEL_VIEW_WIFI) &&
+        !view->selection_mode &&
+        view->age_label != NULL && view->age_label[0] != '\0';
 }
 
 static esp_err_t summary(const sentinel_scan_view_t *view)
@@ -146,12 +155,34 @@ static esp_err_t summary(const sentinel_scan_view_t *view)
     snprintf(buffer, sizeof(buffer), "%u", summary_count(view));
     TRY(text(75, 56, buffer, 5, TEXT, BG, 3));
     TRY(text(76, 84, count_label(view), 18, MUTED, BG, 1));
-    TRY(cerberus_display_fill_rect(224, 57, 88, 23, PANEL));
-    TRY(cerberus_display_fill_rect(224, 57, 2, 23, state_color));
-    TRY(centered(228, 65, 80, state_label(view->state), state_color, PANEL, 1));
+    bool age_control = has_age_control(view);
+    if (age_control) {
+        TRY(cerberus_display_fill_rect(224, 50, 88, 22, PANEL));
+        TRY(cerberus_display_fill_rect(224, 50, 2, 22, state_color));
+        TRY(centered(228, 58, 80,
+            view->kind == SENTINEL_VIEW_BLE && view->sort_label && view->sort_label[0] ?
+                view->sort_label : state_label(view->state),
+            state_color, PANEL, 1));
+        uint16_t age_color = view->state == SENTINEL_VIEW_OFFLINE ? MUTED : color;
+        TRY(cerberus_display_fill_rect(224, 76, 88, 21, PANEL));
+        TRY(cerberus_display_fill_rect(224, 76, 2, 21, age_color));
+        safe_text(buffer, sizeof(buffer), view->age_label, 12);
+        TRY(centered(228, 83, 80, buffer, age_color, PANEL, 1));
+    } else {
+        TRY(cerberus_display_fill_rect(224, 57, 88, 23, PANEL));
+        TRY(cerberus_display_fill_rect(224, 57, 2, 23, state_color));
+        TRY(centered(228, 65, 80, view->selection_mode?"CLEAR":
+            view->kind == SENTINEL_VIEW_BLE && view->sort_label && view->sort_label[0] ?
+                view->sort_label : state_label(view->state),
+            view->selection_mode&&!view->selection_count?MUTED:state_color, PANEL, 1));
+    }
     if (view->page_count > 1 && view->kind != SENTINEL_VIEW_ENERGY) {
-        snprintf(buffer, sizeof(buffer), "%u / %u", (unsigned)view->page + 1U, (unsigned)view->page_count);
-        TRY(centered(220, 85, 92, buffer, MUTED, BG, 1));
+        snprintf(buffer, sizeof(buffer), age_control ? "%u/%u" : "%u / %u",
+            (unsigned)view->page + 1U, (unsigned)view->page_count);
+        /* Keep the page marker outside both the count's five-digit footprint
+         * and the split controls. Wi-Fi/BLE inventories retain at most 32 rows. */
+        if (age_control) TRY(centered(168, 64, 44, buffer, MUTED, BG, 1));
+        else TRY(centered(220, 85, 92, buffer, MUTED, BG, 1));
     }
     return ESP_OK;
 }
@@ -203,7 +234,7 @@ static esp_err_t controls(const sentinel_scan_view_t *view)
     TRY(button(8, 68, "< PREV", color, view->has_previous, false));
     TRY(button(84, 68, scan_label(view), color, view->state != SENTINEL_VIEW_OFFLINE, true));
     TRY(button(160, 68, "NEXT >", color, view->has_next, false));
-    return button(236, 76, "TOOLS", color, true, false);
+    return button(236, 76, view->tools_label?view->tools_label:"TOOLS", color, !view->tools_disabled, view->tools_label!=NULL);
 }
 
 static unsigned signal_level(int8_t rssi)
@@ -220,11 +251,13 @@ static esp_err_t result_card(const sentinel_scan_view_t *view, unsigned index)
     uint16_t y = 126 + (uint16_t)index * 56;
     uint16_t color = accent(view);
     uint16_t mark = row->review ? AMBER : color;
-    TRY(cerberus_display_fill_rect(8, y, 304, 52, BORDER));
+    TRY(cerberus_display_fill_rect(8, y, 304, 52, row->selected?color:BORDER));
     TRY(cerberus_display_fill_rect(9, y + 1, 302, 50, PANEL));
     TRY(cerberus_display_fill_rect(9, y + 1, 2, 50, mark));
-    TRY(text(18, y + 6, row->name == NULL || row->name[0] == '\0' ? "UNNAMED" : row->name,
-             18, TEXT, PANEL, 2));
+    const char *name=row->name == NULL || row->name[0] == '\0' ? "UNNAMED" : row->name;
+    /* Keep all 32 SSID bytes visible when they do not fit the large font. */
+    uint8_t scale=view->kind==SENTINEL_VIEW_WIFI&&strlen(name)>18?1:2;
+    TRY(text(18, y + (scale==1?10:6), name, scale==1?32:18, TEXT, PANEL, scale));
     TRY(text(18, y + 25, row->detail, 37, MUTED, PANEL, 1));
     TRY(text(18, y + 39, row->badge, 33, row->marked || row->review ? mark : MUTED, PANEL, 1));
     if (row->signal_valid) {
@@ -355,9 +388,12 @@ static void remember(const sentinel_scan_view_t *view, uint32_t frame)
     COPY_STRING(count_label, count_label, 18);
     COPY_STRING(message, message, 50);
     COPY_STRING(hint, hint, 50);
+    if(view->tools_label){COPY_STRING(tools_label, tools_label, 12);}
+    if(view->sort_label){COPY_STRING(sort_label, sort_label, 12);}
+    if(view->age_label){COPY_STRING(age_label, age_label, 12);}
 #undef COPY_STRING
     for (unsigned i = 0; i < SENTINEL_VIEW_VISIBLE_ROWS; ++i) {
-        safe_text(rendered.names[i], sizeof(rendered.names[i]), view->rows[i].name, 18);
+        safe_text(rendered.names[i], sizeof(rendered.names[i]), view->rows[i].name, 32);
         safe_text(rendered.details[i], sizeof(rendered.details[i]), view->rows[i].detail, 37);
         safe_text(rendered.badges[i], sizeof(rendered.badges[i]), view->rows[i].badge, 33);
         rendered.view.rows[i].name = rendered.names[i];
@@ -387,8 +423,11 @@ static esp_err_t body(const sentinel_scan_view_t *view)
 
 static bool same_summary(const sentinel_scan_view_t *left, const sentinel_scan_view_t *right)
 {
-    if (summary_count(left) != summary_count(right) || left->state != right->state ||
-        !same_text(count_label(left), count_label(right), 18)) return false;
+    if (left->selection_mode!=right->selection_mode||summary_count(left) != summary_count(right) || left->state != right->state ||
+        !same_text(count_label(left), count_label(right), 18) ||
+        (left->kind == SENTINEL_VIEW_BLE && !same_text(left->sort_label, right->sort_label, 12)) ||
+        has_age_control(left) != has_age_control(right) ||
+        (has_age_control(left) && !same_text(left->age_label, right->age_label, 12))) return false;
     if (left->kind == SENTINEL_VIEW_ENERGY) return true;
     if (left->page_count <= 1 && right->page_count <= 1) return true;
     return left->page == right->page && left->page_count == right->page_count;
@@ -404,10 +443,10 @@ static bool same_row(const sentinel_scan_row_t *left, const sentinel_scan_row_t 
 {
     const char *a = left->name == NULL || left->name[0] == '\0' ? "UNNAMED" : left->name;
     const char *b = right->name == NULL || right->name[0] == '\0' ? "UNNAMED" : right->name;
-    return same_text(a, b, 18) && same_text(left->detail, right->detail, 37) &&
+    return same_text(a, b, 32) && same_text(left->detail, right->detail, 37) &&
         same_text(left->badge, right->badge, 33) && left->signal_valid == right->signal_valid &&
         (!left->signal_valid || left->rssi == right->rssi) &&
-        left->marked == right->marked && left->review == right->review;
+        left->marked == right->marked && left->review == right->review && left->selected == right->selected;
 }
 
 static bool same_energy(const sentinel_scan_view_t *left, const sentinel_scan_view_t *right)
@@ -479,6 +518,9 @@ esp_err_t sentinel_scan_view_update(const sentinel_scan_view_t *view, uint32_t f
         TRY(button(84, 68, scan_label(view), color, view->state != SENTINEL_VIEW_OFFLINE, true));
     if (previous->has_next != view->has_next)
         TRY(button(160, 68, "NEXT >", color, view->has_next, false));
+    if (!same_text(previous->tools_label,view->tools_label,12) || previous->tools_disabled!=view->tools_disabled ||
+        (previous->tools_label==NULL)!=(view->tools_label==NULL))
+        TRY(button(236,76,view->tools_label?view->tools_label:"TOOLS",color,!view->tools_disabled,view->tools_label!=NULL));
     remember(view, frame);
     return ESP_OK;
 }
@@ -492,11 +534,19 @@ sentinel_view_action_t sentinel_scan_view_hit_test(const sentinel_scan_view_t *v
                                                  uint16_t x, uint16_t y)
 {
     if (!valid(view)) return SENTINEL_VIEW_NONE;
+    if(view->selection_mode&&view->selection_count&&x>=224&&x<312&&y>=57&&y<80)return SENTINEL_VIEW_CLEAR;
+    if (!view->selection_mode &&
+        x >= 224 && x < 312 && y >= 48 && y < 98) {
+        if (has_age_control(view) && y >= 74)
+            return view->state != SENTINEL_VIEW_OFFLINE ? SENTINEL_VIEW_AGE : SENTINEL_VIEW_NONE;
+        if (view->kind == SENTINEL_VIEW_BLE && view->sort_label && view->sort_label[0])
+            return SENTINEL_VIEW_SORT;
+    }
     if (y >= 364 && y < 406) {
         if (x >= 8 && x < 76 && view->has_previous) return SENTINEL_VIEW_PREV;
         if (x >= 84 && x < 152 && view->state != SENTINEL_VIEW_OFFLINE) return SENTINEL_VIEW_PAUSE;
         if (x >= 160 && x < 228 && view->has_next) return SENTINEL_VIEW_NEXT;
-        if (x >= 236 && x < 312) return SENTINEL_VIEW_TOOLS;
+        if (x >= 236 && x < 312 && !view->tools_disabled) return SENTINEL_VIEW_TOOLS;
     }
     if (view->kind != SENTINEL_VIEW_ENERGY && x >= 8 && x < 312 && y >= 126 && y < 346) {
         unsigned row = (y - 126U) / 56U;

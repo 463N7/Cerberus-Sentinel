@@ -1,0 +1,23 @@
+CERBERUS RECON SOURCE ATTRIBUTION
+Full retained notices and reference material are embedded in RECON.DB.
+
+chimera-manuf
+https://www.wireshark.org/download/automated/data/manuf
+IEEE-derived registry used by ChimeraBLE; downloaded registry attribution retained
+SHA-256: 1365f240c348dd6f163dc2be0e61f6aa898324b0c168f75dff9969dc46c5a274
+
+cym-ieee
+https://github.com/JimGat/CYM/blob/59a86a86a7bfb35635ebd3a8cac9165bdc6ca238/docs/support_files/oui.csv
+IEEE-derived assignment facts; repository has no root license
+SHA-256: 64e2ee68ad8a849f480d3e6038fe74cbba7b8ee5d59c29f9c4341aad51d6e696
+
+dragon
+https://valleytech-dragon-detector.pages.dev/reference/docs/data/vendor-prefixes.csv
+MIT
+SHA-256: 083b20fc232863b212d6a87e28027edf2d85a0306d4844049aa7ee657c2debec
+
+squach
+https://github.com/skizzophrenic/SquachWatch-CYD/blob/3e9be6c02265b14c798e58da01a0913866143b0f/src/signatures.cpp
+GPL-3.0
+SHA-256: da1ec792721926ae46ca2470364ccd0eef180ba766e0b7c28e9fcb3e3909d7e7
+

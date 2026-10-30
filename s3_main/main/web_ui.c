@@ -1,4 +1,6 @@
 #include "web_ui.h"
+#include "s3_ble_scanner.h"
+#include "s3_wifi_owner.h"
 
 #include "c5_spi_link.h"
 #include "privacy.h"
@@ -49,7 +51,7 @@ typedef struct {
 static const char *TAG = "web_ui";
 static httpd_handle_t web_server;
 static esp_netif_t *web_netif;
-static bool web_netif_initialized;
+static bool web_wifi_claimed;
 static bool web_wifi_initialized;
 static bool web_wifi_started;
 static bool web_handler_registered;
@@ -603,10 +605,11 @@ static esp_err_t radio_get(httpd_req_t *request)
         }
     } else if (strcmp(type, "ble") == 0) {
         cerberus_ble_scan_status_payload_t status;
-        if (c5_spi_link_get_ble_scan_status(&status) == ESP_OK) {
+        if (cerberus_s3_ble_scanner_get_status(&status) == ESP_OK &&
+            status.state == CERBERUS_BLE_SCAN_COMPLETE) {
             for (uint8_t index = 0U; index < status.stored_count && index < 32U; ++index) {
                 cerberus_c5_ble_result_t item;
-                if (c5_spi_link_get_ble_scan_result(status.generation, index, &item) == ESP_OK) {
+                if (cerberus_s3_ble_scanner_get_result(status.generation, index, &item) == ESP_OK) {
                     char escaped[160];
                     char identifier[24];
                     html_escape(item.name[0] ? item.name : "[unnamed]", escaped, sizeof(escaped));
@@ -853,6 +856,11 @@ esp_err_t cerberus_web_ui_stop(void)
         esp_netif_destroy_default_wifi(web_netif);
         web_netif = NULL;
     }
+    if(web_wifi_claimed){
+        esp_err_t err=cerberus_s3_wifi_release(CERBERUS_S3_WIFI_WEB);
+        if(err!=ESP_OK)return err;
+        web_wifi_claimed=false;
+    }
     memset(web_sessions, 0, sizeof(web_sessions));
     memset(password_salt, 0, sizeof(password_salt));
     memset(password_hash, 0, sizeof(password_hash));
@@ -867,19 +875,15 @@ esp_err_t cerberus_web_ui_start(void)
     ESP_RETURN_ON_ERROR(cerberus_web_ui_stop(), TAG, "web cleanup failed");
     esp_err_t err = ESP_OK;
 #define WEB_START_TRY(call) do { err = (call); if (err != ESP_OK) goto failed; } while (0)
-    /* This is the S3's only RF owner; stop() above released it. No S3 ADC
-     * service runs in this firmware. Supply hardware entropy before Wi-Fi
-     * exists, and always release the SAR source before initializing RF. */
+    WEB_START_TRY(cerberus_s3_wifi_claim(CERBERUS_S3_WIFI_WEB));
+    web_wifi_claimed=true;
+    /* Reserve Wi-Fi before using hardware entropy or initializing its driver.
+     * No S3 ADC service runs here; release SAR before initializing Wi-Fi. */
     bootloader_random_enable();
     err = load_or_create_configuration();
     bootloader_random_disable();
     if (err != ESP_OK) goto failed;
-    if (!web_netif_initialized) {
-        WEB_START_TRY(esp_netif_init());
-        web_netif_initialized = true;
-    }
-    err = esp_event_loop_create_default();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto failed;
+    WEB_START_TRY(cerberus_s3_wifi_prepare(CERBERUS_S3_WIFI_WEB));
     web_netif = esp_netif_create_default_wifi_ap();
     if (web_netif == NULL) { err = ESP_ERR_NO_MEM; goto failed; }
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();

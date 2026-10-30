@@ -6,7 +6,9 @@
 extern "C" {
 #endif
 
-/* Starts the bounded, read-only native USB diagnostic console. */
+/* Starts the bounded, read-only native USB diagnostic console. Lifecycle calls
+ * are serialized by the main/UI task; stop waits for commands to finish before
+ * releasing the shared internal USB PHY for mass storage. */
 esp_err_t cerberus_usb_console_start(void);
 esp_err_t cerberus_usb_console_stop(void);
 

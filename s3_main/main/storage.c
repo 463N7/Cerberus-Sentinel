@@ -39,6 +39,8 @@
 #define SD_QR_MAX_MODULE_COUNT 57U
 #define SD_QR_MAX_ROW_BYTES (SD_QR_TARGET_SIZE * 3U)
 #define SD_BENCHMARK_FILE_NAME "SD_BENCH.TMP"
+#define SD_WIFI_CAPTURE_FILE_LIMIT 9999U
+#define SD_WARDRIVE_FILE_LIMIT 999U
 
 static const char *TAG = "storage";
 static sdmmc_card_t *sd_card;
@@ -46,6 +48,13 @@ static SemaphoreHandle_t storage_mutex;
 static bool sd_bus_ready;
 static bool sd_mounted;
 static cerberus_storage_owner_t storage_owner;
+/* Protected by storage_mutex. A token identifies one mounted filesystem
+ * session, not a particular file's contents. Zero is never a mounted token. */
+static uint32_t sd_read_epoch;
+static void advance_storage_read_epoch(void)
+{
+    if (++sd_read_epoch == 0U) ++sd_read_epoch;
+}
 /* Hashing and benchmarking are serialized by storage_mutex. Keeping this
    workspace in BSS avoids exhausting the UI task's runtime stack. */
 static uint8_t sd_hash_buffer[SD_HASH_BUFFER_SIZE];
@@ -68,6 +77,30 @@ static char sd_system_log_line[384];
 static char sd_operation_source_path[CERBERUS_STORAGE_PATH_MAX + CERBERUS_STORAGE_NAME_MAX];
 static char sd_operation_destination_path[CERBERUS_STORAGE_PATH_MAX + CERBERUS_STORAGE_NAME_MAX];
 static char sd_operation_temp_path[CERBERUS_STORAGE_PATH_MAX + CERBERUS_STORAGE_NAME_MAX + 16U];
+static FILE *sd_wifi_capture_file;
+static uint64_t sd_wifi_capture_bytes;
+static char sd_wifi_capture_temp_path[CERBERUS_STORAGE_PATH_MAX + CERBERUS_STORAGE_NAME_MAX];
+static char sd_wifi_capture_final_path[CERBERUS_STORAGE_PATH_MAX + CERBERUS_STORAGE_NAME_MAX];
+static char sd_wifi_capture_name[CERBERUS_STORAGE_NAME_MAX];
+/* Fixed Wardriving paths are short; two compact stream states use less
+ * internal RAM than the former single generic-path allocation. */
+typedef struct {
+    FILE *file;
+    uint64_t bytes;
+    uint32_t pending_rows;
+    int64_t last_sync_us;
+    bool write_failed;
+    char temp_path[256];
+    char final_path[256];
+    char name[24];
+} wardrive_storage_stream_t;
+static wardrive_storage_stream_t sd_wardrive_stream, sd_wigle_stream;
+static bool sd_wardrive_session_active;
+static bool wardrive_storage_busy(void)
+{
+    return sd_wardrive_session_active || sd_wardrive_stream.file != NULL ||
+        sd_wigle_stream.file != NULL;
+}
 
 static void release_sd_bus(void);
 static bool relative_path_is_safe(const char *relative_path);
@@ -105,6 +138,7 @@ static esp_err_t unmount_locked(void)
     esp_err_t err = esp_vfs_fat_sdcard_unmount(CERBERUS_STORAGE_MOUNT_PATH, sd_card);
     if (err == ESP_OK) {
         sd_mounted = false;
+        advance_storage_read_epoch();
         sd_card = NULL;
         /* The VFS unmount calls the SDMMC host deinitializer stored in the
            card descriptor. */
@@ -275,6 +309,7 @@ esp_err_t cerberus_storage_mount(void)
 
     sd_mounted = true;
     storage_owner = CERBERUS_STORAGE_OWNER_FIRMWARE;
+    advance_storage_read_epoch();
     int directory_length = snprintf(sd_operation_source_path, sizeof(sd_operation_source_path),
         "%s/CERBERUS", CERBERUS_STORAGE_MOUNT_PATH);
     if (directory_length < 0 || (size_t)directory_length >= sizeof(sd_operation_source_path) ||
@@ -305,6 +340,10 @@ esp_err_t cerberus_storage_mount(void)
 esp_err_t cerberus_storage_unmount(void)
 {
     ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (sd_wifi_capture_file != NULL || wardrive_storage_busy()) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_err_t err = unmount_locked();
     if (err == ESP_OK && storage_owner == CERBERUS_STORAGE_OWNER_FIRMWARE) {
         storage_owner = CERBERUS_STORAGE_OWNER_NONE;
@@ -318,6 +357,29 @@ bool cerberus_storage_is_mounted(void)
     return sd_mounted;
 }
 
+esp_err_t cerberus_storage_get_read_epoch(uint32_t *epoch)
+{
+    if (epoch == NULL) return ESP_ERR_INVALID_ARG;
+    *epoch = 0U;
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage epoch lock failed");
+    esp_err_t err = require_firmware_owner_locked();
+    if (err == ESP_OK) *epoch = sd_read_epoch;
+    release_storage_mutex();
+    return err;
+}
+
+esp_err_t cerberus_storage_try_get_read_epoch(uint32_t *epoch)
+{
+    if (epoch == NULL) return ESP_ERR_INVALID_ARG;
+    *epoch = 0U;
+    if (storage_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(storage_mutex, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
+    esp_err_t err = require_firmware_owner_locked();
+    if (err == ESP_OK) *epoch = sd_read_epoch;
+    release_storage_mutex();
+    return err;
+}
+
 cerberus_storage_owner_t cerberus_storage_get_owner(void)
 {
     return storage_owner;
@@ -326,6 +388,10 @@ cerberus_storage_owner_t cerberus_storage_get_owner(void)
 esp_err_t cerberus_storage_reserve_for_usb(void)
 {
     ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (sd_wifi_capture_file != NULL || wardrive_storage_busy()) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
     if (storage_owner == CERBERUS_STORAGE_OWNER_USB) {
         release_storage_mutex();
         return ESP_OK;
@@ -722,13 +788,14 @@ static bool diagnostic_report_name_is_safe(const char *file_name)
 
 static esp_err_t write_diagnostic_report_with_prefix(
     const char prefix[4],
+    size_t maximum_bytes,
     const char *data,
     size_t data_length,
     char *file_name,
     size_t file_name_capacity)
 {
     if (prefix == NULL || data == NULL || data_length == 0U ||
-        data_length > CERBERUS_STORAGE_DIAGNOSTIC_MAX_BYTES ||
+        data_length > maximum_bytes ||
         file_name == NULL || file_name_capacity == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -849,7 +916,7 @@ esp_err_t cerberus_storage_write_diagnostic_report(
     size_t file_name_capacity)
 {
     return write_diagnostic_report_with_prefix(
-        "154_", data, data_length, file_name, file_name_capacity);
+        "154_", CERBERUS_STORAGE_DIAGNOSTIC_MAX_BYTES, data, data_length, file_name, file_name_capacity);
 }
 
 esp_err_t cerberus_storage_write_wifi_report(
@@ -859,7 +926,7 @@ esp_err_t cerberus_storage_write_wifi_report(
     size_t file_name_capacity)
 {
     return write_diagnostic_report_with_prefix(
-        "WIFI", data, data_length, file_name, file_name_capacity);
+        "WIFI", CERBERUS_STORAGE_WIFI_REPORT_MAX_BYTES, data, data_length, file_name, file_name_capacity);
 }
 
 esp_err_t cerberus_storage_write_wifi_defense_report(
@@ -869,8 +936,364 @@ esp_err_t cerberus_storage_write_wifi_defense_report(
     size_t file_name_capacity)
 {
     return write_diagnostic_report_with_prefix(
-        "WDEF", data, data_length, file_name, file_name_capacity);
+        "WDEF", CERBERUS_STORAGE_DIAGNOSTIC_MAX_BYTES, data, data_length, file_name, file_name_capacity);
 }
+
+esp_err_t cerberus_storage_write_portal_report(
+    const char *data,
+    size_t data_length,
+    char *file_name,
+    size_t file_name_capacity)
+{
+    return write_diagnostic_report_with_prefix(
+        "PORT", CERBERUS_STORAGE_DIAGNOSTIC_MAX_BYTES, data, data_length, file_name, file_name_capacity);
+}
+
+esp_err_t cerberus_storage_wifi_capture_begin(const uint8_t *header, size_t header_length)
+{
+    if (header == NULL || header_length == 0U || header_length > 512U)
+        return ESP_ERR_INVALID_ARG;
+    if (!cerberus_storage_is_mounted()) {
+        ESP_RETURN_ON_ERROR(cerberus_storage_mount(), TAG, "SD mount for Wi-Fi capture failed");
+    }
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (require_firmware_owner_locked() != ESP_OK || sd_wifi_capture_file != NULL ||
+        wardrive_storage_busy()) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    char directory[CERBERUS_STORAGE_PATH_MAX];
+    int n = snprintf(directory, sizeof(directory), "%s/CERBERUS", CERBERUS_STORAGE_MOUNT_PATH);
+    if (n < 0 || (size_t)n >= sizeof(directory)) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_SIZE;
+    }
+    esp_err_t error = ensure_directory_exists(directory);
+    if (error == ESP_OK) {
+        n = snprintf(directory, sizeof(directory), "%s/CERBERUS/CAPTURES", CERBERUS_STORAGE_MOUNT_PATH);
+        error = n < 0 || (size_t)n >= sizeof(directory) ? ESP_ERR_INVALID_SIZE :
+            ensure_directory_exists(directory);
+    }
+    if (error != ESP_OK) {
+        release_storage_mutex();
+        return error;
+    }
+    struct stat item;
+    unsigned index;
+    for (index = 1U; index <= SD_WIFI_CAPTURE_FILE_LIMIT; ++index) {
+        int name_n = snprintf(sd_wifi_capture_name, sizeof(sd_wifi_capture_name), "WCAP%04u.PCAPNG", index);
+        int final_n = snprintf(sd_wifi_capture_final_path, sizeof(sd_wifi_capture_final_path),
+            "%s/%s", directory, sd_wifi_capture_name);
+        int temp_n = snprintf(sd_wifi_capture_temp_path, sizeof(sd_wifi_capture_temp_path),
+            "%s/WCAP%04u.TMP", directory, index);
+        if (name_n < 0 || (size_t)name_n >= sizeof(sd_wifi_capture_name) ||
+            final_n < 0 || (size_t)final_n >= sizeof(sd_wifi_capture_final_path) ||
+            temp_n < 0 || (size_t)temp_n >= sizeof(sd_wifi_capture_temp_path)) {
+            error = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        if (stat(sd_wifi_capture_final_path, &item) != 0 &&
+            stat(sd_wifi_capture_temp_path, &item) != 0) break;
+    }
+    if (error == ESP_OK && index > SD_WIFI_CAPTURE_FILE_LIMIT) error = ESP_ERR_NOT_FOUND;
+    if (error != ESP_OK) {
+        release_storage_mutex();
+        return error;
+    }
+    FILE *file = fopen(sd_wifi_capture_temp_path, "wb");
+    if (file == NULL) {
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    if (fwrite(header, 1U, header_length, file) != header_length) {
+        (void)fclose(file);
+        (void)remove(sd_wifi_capture_temp_path);
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    sd_wifi_capture_file = file;
+    sd_wifi_capture_bytes = header_length;
+    release_storage_mutex();
+    return ESP_OK;
+}
+
+esp_err_t cerberus_storage_wifi_capture_append(const uint8_t *record, size_t record_length)
+{
+    if (record == NULL || record_length == 0U) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (sd_wifi_capture_file == NULL || require_firmware_owner_locked() != ESP_OK) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (record_length > CERBERUS_STORAGE_WIFI_CAPTURE_MAX_BYTES - sd_wifi_capture_bytes) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (fwrite(record, 1U, record_length, sd_wifi_capture_file) != record_length) {
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    sd_wifi_capture_bytes += record_length;
+    release_storage_mutex();
+    return ESP_OK;
+}
+
+esp_err_t cerberus_storage_wifi_capture_finish(bool keep,
+    char *file_name, size_t file_name_capacity, uint64_t *bytes_written)
+{
+    if (file_name != NULL && file_name_capacity != 0U) file_name[0] = '\0';
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (sd_wifi_capture_file == NULL) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (keep && (file_name == NULL || file_name_capacity < strlen(sd_wifi_capture_name) + 1U)) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_ARG;
+    }
+    FILE *file = sd_wifi_capture_file;
+    uint64_t size = sd_wifi_capture_bytes;
+    bool failed = fflush(file) != 0;
+    if (fclose(file) != 0) failed = true;
+    sd_wifi_capture_file = NULL;
+    sd_wifi_capture_bytes = 0U;
+    esp_err_t error = failed ? ESP_FAIL : ESP_OK;
+    if (keep && error == ESP_OK) {
+        if (rename(sd_wifi_capture_temp_path, sd_wifi_capture_final_path) != 0) error = ESP_FAIL;
+        else {
+            memcpy(file_name, sd_wifi_capture_name, strlen(sd_wifi_capture_name) + 1U);
+            if (bytes_written != NULL) *bytes_written = size;
+        }
+    } else if (!keep) {
+        if (remove(sd_wifi_capture_temp_path) != 0) error = ESP_FAIL;
+    }
+    if (error == ESP_OK && keep)
+        ESP_LOGI(TAG, "saved Wi-Fi capture %s (%llu bytes)", sd_wifi_capture_final_path,
+            (unsigned long long)size);
+    release_storage_mutex();
+    return error;
+}
+
+static esp_err_t wardrive_stream_begin(wardrive_storage_stream_t *stream,
+    const char *prefix, const char *header, size_t header_length)
+{
+    if (header == NULL || header_length == 0U || header_length > 512U)
+        return ESP_ERR_INVALID_ARG;
+    if (!cerberus_storage_is_mounted()) {
+        ESP_RETURN_ON_ERROR(cerberus_storage_mount(), TAG, "SD mount for Wardriving failed");
+    }
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (require_firmware_owner_locked() != ESP_OK || stream->file != NULL ||
+        sd_wifi_capture_file != NULL) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    char directory[CERBERUS_STORAGE_PATH_MAX];
+    int n = snprintf(directory, sizeof(directory), "%s/CERBERUS", CERBERUS_STORAGE_MOUNT_PATH);
+    if (n < 0 || (size_t)n >= sizeof(directory)) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_SIZE;
+    }
+    esp_err_t error = ensure_directory_exists(directory);
+    if (error == ESP_OK) {
+        n = snprintf(directory, sizeof(directory), "%s%s",
+            CERBERUS_STORAGE_MOUNT_PATH, CERBERUS_STORAGE_WARDRIVE_PATH);
+        error = n < 0 || (size_t)n >= sizeof(directory) ? ESP_ERR_INVALID_SIZE :
+            ensure_directory_exists(directory);
+    }
+    if (error != ESP_OK) {
+        release_storage_mutex();
+        return error;
+    }
+    struct stat item;
+    unsigned index;
+    for (index = 1U; index <= SD_WARDRIVE_FILE_LIMIT; ++index) {
+        int name_n = snprintf(stream->name, sizeof(stream->name),
+            "%s%03u.CSV", prefix, index);
+        int final_n = snprintf(stream->final_path, sizeof(stream->final_path),
+            "%s/%s", directory, stream->name);
+        int temp_n = snprintf(stream->temp_path, sizeof(stream->temp_path),
+            "%s/%s%03u.TMP", directory, prefix, index);
+        if (name_n < 0 || (size_t)name_n >= sizeof(stream->name) ||
+            final_n < 0 || (size_t)final_n >= sizeof(stream->final_path) ||
+            temp_n < 0 || (size_t)temp_n >= sizeof(stream->temp_path)) {
+            error = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        if (stat(stream->final_path, &item) != 0 &&
+            stat(stream->temp_path, &item) != 0) break;
+    }
+    if (error == ESP_OK && index > SD_WARDRIVE_FILE_LIMIT) error = ESP_ERR_NOT_FOUND;
+    if (error != ESP_OK) {
+        release_storage_mutex();
+        return error;
+    }
+    FILE *file = fopen(stream->temp_path, "wb");
+    if (file == NULL) {
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    bool failed = fwrite(header, 1U, header_length, file) != header_length ||
+        fflush(file) != 0 || fsync(fileno(file)) != 0;
+    if (failed) {
+        (void)fclose(file);
+        (void)remove(stream->temp_path);
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    stream->file = file;
+    stream->bytes = header_length;
+    stream->pending_rows = 0U;
+    stream->last_sync_us = esp_timer_get_time();
+    stream->write_failed = false;
+    release_storage_mutex();
+    return ESP_OK;
+}
+
+static esp_err_t wardrive_stream_sync(wardrive_storage_stream_t *stream)
+{
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (stream->file == NULL || require_firmware_owner_locked() != ESP_OK) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (stream->write_failed) {
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    esp_err_t error = ESP_OK;
+    if (stream->pending_rows != 0U &&
+        (fflush(stream->file) != 0 || fsync(fileno(stream->file)) != 0))
+        error = ESP_FAIL;
+    if (error != ESP_OK) stream->write_failed = true;
+    if (error == ESP_OK) {
+        stream->pending_rows = 0U;
+        stream->last_sync_us = esp_timer_get_time();
+    }
+    release_storage_mutex();
+    return error;
+}
+
+static esp_err_t wardrive_stream_append(wardrive_storage_stream_t *stream,
+    const char *row, size_t row_length)
+{
+    if (row == NULL || row_length == 0U || row_length > 512U) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (stream->file == NULL || require_firmware_owner_locked() != ESP_OK) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (stream->write_failed) {
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    if (row_length > CERBERUS_STORAGE_WARDRIVE_MAX_BYTES - stream->bytes) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (fwrite(row, 1U, row_length, stream->file) != row_length) {
+        /* The FILE can contain a partial row even if a later flush succeeds. */
+        stream->write_failed = true;
+        release_storage_mutex();
+        return ESP_FAIL;
+    }
+    stream->bytes += row_length;
+    ++stream->pending_rows;
+    bool due = stream->pending_rows >= 25U ||
+        esp_timer_get_time() - stream->last_sync_us >= 2000000LL;
+    esp_err_t error = ESP_OK;
+    if (due && (fflush(stream->file) != 0 || fsync(fileno(stream->file)) != 0))
+        error = ESP_FAIL;
+    if (error != ESP_OK) stream->write_failed = true;
+    if (due && error == ESP_OK) {
+        stream->pending_rows = 0U;
+        stream->last_sync_us = esp_timer_get_time();
+    }
+    release_storage_mutex();
+    return error;
+}
+
+static esp_err_t wardrive_stream_finish(wardrive_storage_stream_t *stream, bool keep,
+    char *file_name, size_t file_name_capacity, uint64_t *bytes_written)
+{
+    if (file_name != NULL && file_name_capacity != 0U) file_name[0] = '\0';
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    if (stream->file == NULL) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (keep && (file_name == NULL || file_name_capacity < strlen(stream->name) + 1U)) {
+        release_storage_mutex();
+        return ESP_ERR_INVALID_ARG;
+    }
+    FILE *file = stream->file;
+    uint64_t size = stream->bytes;
+    bool failed = stream->write_failed;
+    if (fflush(file) != 0 || fsync(fileno(file)) != 0) failed = true;
+    if (fclose(file) != 0) failed = true;
+    stream->file = NULL;
+    stream->bytes = 0U;
+    stream->pending_rows = 0U;
+    esp_err_t error = failed ? ESP_FAIL : ESP_OK;
+    if (keep && error == ESP_OK) {
+        if (rename(stream->temp_path, stream->final_path) != 0) error = ESP_FAIL;
+        else {
+            memcpy(file_name, stream->name, strlen(stream->name) + 1U);
+            if (bytes_written != NULL) *bytes_written = size;
+        }
+    } else if (!keep && !failed && remove(stream->temp_path) != 0) {
+        error = ESP_FAIL;
+    }
+    if (error == ESP_OK && keep)
+        ESP_LOGI(TAG, "saved Wardriving %s (%llu bytes)",
+            stream->final_path, (unsigned long long)size);
+    release_storage_mutex();
+    return error;
+}
+
+/* The session lease also covers the period before either lazy file opens. */
+esp_err_t cerberus_storage_wardrive_session_begin(void)
+{
+    if (!cerberus_storage_is_mounted())
+        ESP_RETURN_ON_ERROR(cerberus_storage_mount(), TAG, "SD mount for Wardriving failed");
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    esp_err_t error = ESP_OK;
+    if (require_firmware_owner_locked() != ESP_OK || wardrive_storage_busy() ||
+        sd_wifi_capture_file != NULL) error = ESP_ERR_INVALID_STATE;
+    else sd_wardrive_session_active = true;
+    release_storage_mutex();
+    return error;
+}
+
+esp_err_t cerberus_storage_wardrive_session_finish(void)
+{
+    ESP_RETURN_ON_ERROR(take_storage_mutex(), TAG, "storage lock failed");
+    esp_err_t error = ESP_OK;
+    if (sd_wardrive_stream.file != NULL || sd_wigle_stream.file != NULL)
+        error = ESP_ERR_INVALID_STATE;
+    else sd_wardrive_session_active = false;
+    release_storage_mutex();
+    return error;
+}
+
+esp_err_t cerberus_storage_wardrive_begin(const char *header, size_t length)
+{ return wardrive_stream_begin(&sd_wardrive_stream, "UNLOC", header, length); }
+esp_err_t cerberus_storage_wardrive_append(const char *row, size_t length)
+{ return wardrive_stream_append(&sd_wardrive_stream, row, length); }
+esp_err_t cerberus_storage_wardrive_sync(void)
+{ return wardrive_stream_sync(&sd_wardrive_stream); }
+esp_err_t cerberus_storage_wardrive_finish(bool keep, char *name,
+    size_t capacity, uint64_t *bytes)
+{ return wardrive_stream_finish(&sd_wardrive_stream, keep, name, capacity, bytes); }
+esp_err_t cerberus_storage_wardrive_wigle_begin(const char *header, size_t length)
+{ return wardrive_stream_begin(&sd_wigle_stream, "WIGLE", header, length); }
+esp_err_t cerberus_storage_wardrive_wigle_append(const char *row, size_t length)
+{ return wardrive_stream_append(&sd_wigle_stream, row, length); }
+esp_err_t cerberus_storage_wardrive_wigle_sync(void)
+{ return wardrive_stream_sync(&sd_wigle_stream); }
+esp_err_t cerberus_storage_wardrive_wigle_finish(bool keep, char *name,
+    size_t capacity, uint64_t *bytes)
+{ return wardrive_stream_finish(&sd_wigle_stream, keep, name, capacity, bytes); }
 
 static void write_le16(uint8_t *destination, uint16_t value)
 {

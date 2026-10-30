@@ -1,0 +1,2057 @@
+{
+  "format": 1,
+  "upstream": "https://github.com/justcallmekoko/ESP32Marauder",
+  "revision": "511bb3694d0c4dc064888e762bde44fcc9b7f48a",
+  "scope_note": "Source modes, literal menu entries and top-level CLI commands overlap; counts are not distinct features or proof of parity. Dynamic suboptions and board-specific services require manual review.",
+  "source_sha256": {
+    "WiFiScan.h": "72b99a2bd360d9c4a5660db159c7bddac385f4d50226844fee9dbf1f114fedac",
+    "MenuFunctions.cpp": "99c21ac42f46db186b6b73253065c3766531a328ed90edb457d1528a42a13a98",
+    "CommandLine.cpp": "4c8934b0b437b386f50e3a829609c2def2408b5da4e04b00ee5e5b10aa3b8e70",
+    "CommandLine.h": "38b0dd5b677d147a36b5c197c7dd08258ca1c615f5f1423907c70c4f7126592a",
+    "lang_var.h": "e4a40cfd8c8bd3fe66b79424cd001776f806f7d9cc128fc5d5bbd048af9660d6"
+  },
+  "modes": [
+    {
+      "symbol": "OTA_UPDATE",
+      "upstream_value": 100,
+      "source_line": 91
+    },
+    {
+      "symbol": "SHOW_INFO",
+      "upstream_value": 101,
+      "source_line": 92
+    },
+    {
+      "symbol": "ESP_UPDATE",
+      "upstream_value": 102,
+      "source_line": 93
+    },
+    {
+      "symbol": "WIFI_SCAN_OFF",
+      "upstream_value": 0,
+      "source_line": 94
+    },
+    {
+      "symbol": "WIFI_SCAN_PROBE",
+      "upstream_value": 1,
+      "source_line": 95
+    },
+    {
+      "symbol": "WIFI_SCAN_AP",
+      "upstream_value": 2,
+      "source_line": 96
+    },
+    {
+      "symbol": "WIFI_SCAN_PWN",
+      "upstream_value": 3,
+      "source_line": 97
+    },
+    {
+      "symbol": "WIFI_SCAN_EAPOL",
+      "upstream_value": 4,
+      "source_line": 98
+    },
+    {
+      "symbol": "WIFI_SCAN_DEAUTH",
+      "upstream_value": 5,
+      "source_line": 99
+    },
+    {
+      "symbol": "WIFI_SCAN_ALL",
+      "upstream_value": 6,
+      "source_line": 100
+    },
+    {
+      "symbol": "WIFI_PACKET_MONITOR",
+      "upstream_value": 7,
+      "source_line": 101
+    },
+    {
+      "symbol": "WIFI_ATTACK_BEACON_SPAM",
+      "upstream_value": 8,
+      "source_line": 102
+    },
+    {
+      "symbol": "WIFI_ATTACK_RICK_ROLL",
+      "upstream_value": 9,
+      "source_line": 103
+    },
+    {
+      "symbol": "BT_SCAN_ALL",
+      "upstream_value": 10,
+      "source_line": 104
+    },
+    {
+      "symbol": "BT_SCAN_SKIMMERS",
+      "upstream_value": 11,
+      "source_line": 105
+    },
+    {
+      "symbol": "WIFI_SCAN_ESPRESSIF",
+      "upstream_value": 12,
+      "source_line": 106
+    },
+    {
+      "symbol": "LV_JOIN_WIFI",
+      "upstream_value": 13,
+      "source_line": 107
+    },
+    {
+      "symbol": "LV_ADD_SSID",
+      "upstream_value": 14,
+      "source_line": 108
+    },
+    {
+      "symbol": "WIFI_ATTACK_BEACON_LIST",
+      "upstream_value": 15,
+      "source_line": 109
+    },
+    {
+      "symbol": "WIFI_SCAN_TARGET_AP",
+      "upstream_value": 16,
+      "source_line": 110
+    },
+    {
+      "symbol": "LV_SELECT_AP",
+      "upstream_value": 17,
+      "source_line": 111
+    },
+    {
+      "symbol": "WIFI_ATTACK_AUTH",
+      "upstream_value": 18,
+      "source_line": 112
+    },
+    {
+      "symbol": "WIFI_ATTACK_MIMIC",
+      "upstream_value": 19,
+      "source_line": 113
+    },
+    {
+      "symbol": "WIFI_ATTACK_DEAUTH",
+      "upstream_value": 20,
+      "source_line": 114
+    },
+    {
+      "symbol": "WIFI_ATTACK_AP_SPAM",
+      "upstream_value": 21,
+      "source_line": 115
+    },
+    {
+      "symbol": "WIFI_SCAN_TARGET_AP_FULL",
+      "upstream_value": 22,
+      "source_line": 116
+    },
+    {
+      "symbol": "WIFI_SCAN_ACTIVE_EAPOL",
+      "upstream_value": 23,
+      "source_line": 117
+    },
+    {
+      "symbol": "WIFI_ATTACK_DEAUTH_MANUAL",
+      "upstream_value": 24,
+      "source_line": 118
+    },
+    {
+      "symbol": "WIFI_SCAN_RAW_CAPTURE",
+      "upstream_value": 25,
+      "source_line": 119
+    },
+    {
+      "symbol": "WIFI_SCAN_STATION",
+      "upstream_value": 26,
+      "source_line": 120
+    },
+    {
+      "symbol": "WIFI_ATTACK_DEAUTH_TARGETED",
+      "upstream_value": 27,
+      "source_line": 121
+    },
+    {
+      "symbol": "WIFI_SCAN_ACTIVE_LIST_EAPOL",
+      "upstream_value": 28,
+      "source_line": 122
+    },
+    {
+      "symbol": "WIFI_SCAN_SIG_STREN",
+      "upstream_value": 29,
+      "source_line": 123
+    },
+    {
+      "symbol": "WIFI_SCAN_EVIL_PORTAL",
+      "upstream_value": 30,
+      "source_line": 124
+    },
+    {
+      "symbol": "WIFI_SCAN_GPS_DATA",
+      "upstream_value": 31,
+      "source_line": 125
+    },
+    {
+      "symbol": "WIFI_SCAN_WAR_DRIVE",
+      "upstream_value": 32,
+      "source_line": 126
+    },
+    {
+      "symbol": "WIFI_SCAN_STATION_WAR_DRIVE",
+      "upstream_value": 33,
+      "source_line": 127
+    },
+    {
+      "symbol": "BT_SCAN_WAR_DRIVE",
+      "upstream_value": 34,
+      "source_line": 128
+    },
+    {
+      "symbol": "BT_SCAN_WAR_DRIVE_CONT",
+      "upstream_value": 35,
+      "source_line": 129
+    },
+    {
+      "symbol": "BT_ATTACK_SOUR_APPLE",
+      "upstream_value": 36,
+      "source_line": 130
+    },
+    {
+      "symbol": "BT_ATTACK_SWIFTPAIR_SPAM",
+      "upstream_value": 37,
+      "source_line": 131
+    },
+    {
+      "symbol": "BT_ATTACK_SPAM_ALL",
+      "upstream_value": 38,
+      "source_line": 132
+    },
+    {
+      "symbol": "BT_ATTACK_SAMSUNG_SPAM",
+      "upstream_value": 39,
+      "source_line": 133
+    },
+    {
+      "symbol": "WIFI_SCAN_GPS_NMEA",
+      "upstream_value": 40,
+      "source_line": 134
+    },
+    {
+      "symbol": "BT_ATTACK_GOOGLE_SPAM",
+      "upstream_value": 41,
+      "source_line": 135
+    },
+    {
+      "symbol": "BT_ATTACK_FLIPPER_SPAM",
+      "upstream_value": 42,
+      "source_line": 136
+    },
+    {
+      "symbol": "BT_SCAN_AIRTAG",
+      "upstream_value": 43,
+      "source_line": 137
+    },
+    {
+      "symbol": "BT_SPOOF_AIRTAG",
+      "upstream_value": 44,
+      "source_line": 138
+    },
+    {
+      "symbol": "BT_SCAN_FLIPPER",
+      "upstream_value": 45,
+      "source_line": 139
+    },
+    {
+      "symbol": "WIFI_SCAN_CHAN_ANALYZER",
+      "upstream_value": 46,
+      "source_line": 140
+    },
+    {
+      "symbol": "BT_SCAN_ANALYZER",
+      "upstream_value": 47,
+      "source_line": 141
+    },
+    {
+      "symbol": "WIFI_SCAN_PACKET_RATE",
+      "upstream_value": 48,
+      "source_line": 142
+    },
+    {
+      "symbol": "WIFI_SCAN_AP_STA",
+      "upstream_value": 49,
+      "source_line": 143
+    },
+    {
+      "symbol": "WIFI_SCAN_PINESCAN",
+      "upstream_value": 50,
+      "source_line": 144
+    },
+    {
+      "symbol": "WIFI_SCAN_MULTISSID",
+      "upstream_value": 51,
+      "source_line": 145
+    },
+    {
+      "symbol": "WIFI_CONNECTED",
+      "upstream_value": 52,
+      "source_line": 146
+    },
+    {
+      "symbol": "WIFI_PING_SCAN",
+      "upstream_value": 53,
+      "source_line": 147
+    },
+    {
+      "symbol": "WIFI_PORT_SCAN_ALL",
+      "upstream_value": 54,
+      "source_line": 148
+    },
+    {
+      "symbol": "GPS_TRACKER",
+      "upstream_value": 55,
+      "source_line": 149
+    },
+    {
+      "symbol": "WIFI_ATTACK_BAD_MSG",
+      "upstream_value": 56,
+      "source_line": 150
+    },
+    {
+      "symbol": "WIFI_ATTACK_BAD_MSG_TARGETED",
+      "upstream_value": 57,
+      "source_line": 151
+    },
+    {
+      "symbol": "WIFI_SCAN_TELNET",
+      "upstream_value": 58,
+      "source_line": 152
+    },
+    {
+      "symbol": "WIFI_SCAN_SSH",
+      "upstream_value": 59,
+      "source_line": 153
+    },
+    {
+      "symbol": "WIFI_ARP_SCAN",
+      "upstream_value": 60,
+      "source_line": 154
+    },
+    {
+      "symbol": "WIFI_ATTACK_SLEEP",
+      "upstream_value": 61,
+      "source_line": 155
+    },
+    {
+      "symbol": "WIFI_ATTACK_SLEEP_TARGETED",
+      "upstream_value": 62,
+      "source_line": 156
+    },
+    {
+      "symbol": "GPS_POI",
+      "upstream_value": 63,
+      "source_line": 157
+    },
+    {
+      "symbol": "WIFI_SCAN_DNS",
+      "upstream_value": 64,
+      "source_line": 158
+    },
+    {
+      "symbol": "WIFI_SCAN_HTTP",
+      "upstream_value": 65,
+      "source_line": 159
+    },
+    {
+      "symbol": "WIFI_SCAN_HTTPS",
+      "upstream_value": 66,
+      "source_line": 160
+    },
+    {
+      "symbol": "WIFI_SCAN_SMTP",
+      "upstream_value": 67,
+      "source_line": 161
+    },
+    {
+      "symbol": "WIFI_SCAN_RDP",
+      "upstream_value": 68,
+      "source_line": 162
+    },
+    {
+      "symbol": "WIFI_HOSTSPOT",
+      "upstream_value": 69,
+      "source_line": 163
+    },
+    {
+      "symbol": "BT_SCAN_AIRTAG_MON",
+      "upstream_value": 70,
+      "source_line": 164
+    },
+    {
+      "symbol": "WIFI_SCAN_CHAN_ACT",
+      "upstream_value": 71,
+      "source_line": 165
+    },
+    {
+      "symbol": "BT_SCAN_FLOCK",
+      "upstream_value": 72,
+      "source_line": 166
+    },
+    {
+      "symbol": "BT_SCAN_SIMPLE",
+      "upstream_value": 73,
+      "source_line": 167
+    },
+    {
+      "symbol": "BT_SCAN_SIMPLE_TWO",
+      "upstream_value": 74,
+      "source_line": 168
+    },
+    {
+      "symbol": "BT_SCAN_FLOCK_WARDRIVE",
+      "upstream_value": 75,
+      "source_line": 169
+    },
+    {
+      "symbol": "WIFI_SCAN_DETECT_FOLLOW",
+      "upstream_value": 76,
+      "source_line": 170
+    },
+    {
+      "symbol": "WIFI_SCAN_SAE_COMMIT",
+      "upstream_value": 77,
+      "source_line": 171
+    },
+    {
+      "symbol": "WIFI_ATTACK_SAE_COMMIT",
+      "upstream_value": 78,
+      "source_line": 172
+    },
+    {
+      "symbol": "WIFI_ATTACK_CSA",
+      "upstream_value": 79,
+      "source_line": 173
+    },
+    {
+      "symbol": "WIFI_ATTACK_QUIET",
+      "upstream_value": 80,
+      "source_line": 174
+    },
+    {
+      "symbol": "BT_SCAN_RAYBAN",
+      "upstream_value": 81,
+      "source_line": 175
+    },
+    {
+      "symbol": "BT_ATTACK_APPLE_JUICE",
+      "upstream_value": 82,
+      "source_line": 176
+    },
+    {
+      "symbol": "WIFI_SCAN_DISPLAY_AP_INFO",
+      "upstream_value": 83,
+      "source_line": 177
+    },
+    {
+      "symbol": "BT_SCAN_FOX_HUNT",
+      "upstream_value": 84,
+      "source_line": 178
+    },
+    {
+      "symbol": "BT_SCAN_IBEACON",
+      "upstream_value": 85,
+      "source_line": 179
+    },
+    {
+      "symbol": "BT_FINDMY_SOUND",
+      "upstream_value": 85,
+      "source_line": 180
+    },
+    {
+      "symbol": "BT_ATTACK_FINDMY_LIVE",
+      "upstream_value": 86,
+      "source_line": 181
+    },
+    {
+      "symbol": "REMOTE_ID_SCAN_ALL",
+      "upstream_value": 87,
+      "source_line": 182
+    },
+    {
+      "symbol": "REMOTE_ID_SCAN_TARGET",
+      "upstream_value": 88,
+      "source_line": 183
+    },
+    {
+      "symbol": "WIFI_SCAN_CSI_MOTION",
+      "upstream_value": 89,
+      "source_line": 184
+    },
+    {
+      "symbol": "WIFI_ATTACK_FUNNY_BEACON",
+      "upstream_value": 99,
+      "source_line": 186
+    }
+  ],
+  "literal_menu_entries": [
+    {
+      "menu": "uploadLogsMenu",
+      "label": "Back",
+      "source_line": 1909
+    },
+    {
+      "menu": "uploadLogsMenu",
+      "label": "Delete Wardrive Logs",
+      "source_line": 1913
+    },
+    {
+      "menu": "uploadLogsMenu",
+      "label": "Upload All",
+      "source_line": 1917
+    },
+    {
+      "menu": "foxSortMenu",
+      "label": "Back",
+      "source_line": 1979
+    },
+    {
+      "menu": "foxSortMenu",
+      "label": "Signal: Strongest",
+      "source_line": 1980
+    },
+    {
+      "menu": "foxSortMenu",
+      "label": "Name/MAC: A-Z",
+      "source_line": 1984
+    },
+    {
+      "menu": "foxSortMenu",
+      "label": "Channel: Low-High",
+      "source_line": 1989
+    },
+    {
+      "menu": "foxFilterMenu",
+      "label": "Back",
+      "source_line": 2000
+    },
+    {
+      "menu": "foxFilterMenu",
+      "label": "All",
+      "source_line": 2001
+    },
+    {
+      "menu": "foxFilterMenu",
+      "label": "Seen in 30 Seconds",
+      "source_line": 2006
+    },
+    {
+      "menu": "foxFilterMenu",
+      "label": "2.4 GHz",
+      "source_line": 2012
+    },
+    {
+      "menu": "foxFilterMenu",
+      "label": "5 GHz",
+      "source_line": 2017
+    },
+    {
+      "menu": "dynamic",
+      "label": "Back",
+      "source_line": 2039
+    },
+    {
+      "menu": "dynamic",
+      "label": "Refresh List",
+      "source_line": 2044
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Back",
+      "source_line": 2198
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "APs",
+      "source_line": 2199
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Stations",
+      "source_line": 2200
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "WiFi Pineapples",
+      "source_line": 2201
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "MultiSSID",
+      "source_line": 2202
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Back",
+      "source_line": 2209
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "BLE Devices",
+      "source_line": 2210
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "FindMy",
+      "source_line": 2211
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Flipper Zero",
+      "source_line": 2212
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "iBeacons",
+      "source_line": 2213
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Meta",
+      "source_line": 2214
+    },
+    {
+      "menu": "foxHuntMenu",
+      "label": "Flock",
+      "source_line": 2215
+    },
+    {
+      "menu": "evilPortalMenu",
+      "label": "Back",
+      "source_line": 2426
+    },
+    {
+      "menu": "evilPortalMenu",
+      "label": "AP Config",
+      "source_line": 2429
+    },
+    {
+      "menu": "evilPortalMenu",
+      "label": "Access Points",
+      "source_line": 2437
+    },
+    {
+      "menu": "evilPortalMenu",
+      "label": "User SSIDs",
+      "source_line": 2440
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Back",
+      "source_line": 2464
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Save SSIDs",
+      "source_line": 2467
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Load SSIDs",
+      "source_line": 2471
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Save APs",
+      "source_line": 2475
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Load APs",
+      "source_line": 2479
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Save Airtags",
+      "source_line": 2483
+    },
+    {
+      "menu": "saveFileMenu",
+      "label": "Load Airtags",
+      "source_line": 2487
+    },
+    {
+      "menu": "saveSSIDsMenu",
+      "label": "Back",
+      "source_line": 2493
+    },
+    {
+      "menu": "loadSSIDsMenu",
+      "label": "Back",
+      "source_line": 2498
+    },
+    {
+      "menu": "saveAPsMenu",
+      "label": "Back",
+      "source_line": 2503
+    },
+    {
+      "menu": "loadAPsMenu",
+      "label": "Back",
+      "source_line": 2508
+    },
+    {
+      "menu": "saveATsMenu",
+      "label": "Back",
+      "source_line": 2513
+    },
+    {
+      "menu": "loadATsMenu",
+      "label": "Back",
+      "source_line": 2518
+    },
+    {
+      "menu": "gpsPOIMenu",
+      "label": "Back",
+      "source_line": 2529
+    },
+    {
+      "menu": "gpsPOIMenu",
+      "label": "Mark POI",
+      "source_line": 2534
+    },
+    {
+      "menu": "gpsInfoMenu",
+      "label": "Back",
+      "source_line": 2549
+    },
+    {
+      "menu": "settingsMenu",
+      "label": "Back",
+      "source_line": 2561
+    },
+    {
+      "menu": "specSettingMenu",
+      "label": "Back",
+      "source_line": 2574
+    },
+    {
+      "menu": "specSettingMenu",
+      "label": "Back",
+      "source_line": 2597
+    },
+    {
+      "menu": "failedUpdateMenu",
+      "label": "Back",
+      "source_line": 2606
+    },
+    {
+      "menu": "infoMenu",
+      "label": "Back",
+      "source_line": 2613
+    },
+    {
+      "menu": "iBeaconInfoMenu",
+      "label": "Back",
+      "source_line": 2618
+    },
+    {
+      "menu": "geofenceMenu",
+      "label": "Back",
+      "source_line": 2754
+    },
+    {
+      "menu": "geofenceActionMenu",
+      "label": "Back",
+      "source_line": 2774
+    },
+    {
+      "menu": "geofenceActionMenu",
+      "label": "Enter coordinates",
+      "source_line": 2775
+    },
+    {
+      "menu": "geofenceActionMenu",
+      "label": "Use current GPS",
+      "source_line": 2787
+    },
+    {
+      "menu": "geofenceActionMenu",
+      "label": "Clear geofence",
+      "source_line": 2801
+    },
+    {
+      "menu": "sdDeleteMenu",
+      "label": "Back",
+      "source_line": 3365
+    },
+    {
+      "menu": "sdDeleteMenu",
+      "label": "Back",
+      "source_line": 3453
+    },
+    {
+      "menu": "sdDeleteMenu",
+      "label": "Delete Selected",
+      "source_line": 3464
+    },
+    {
+      "menu": "sdDeleteMenu",
+      "label": "Deselect All",
+      "source_line": 3488
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Back",
+      "source_line": 3554
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Generate SSIDs",
+      "source_line": 3557
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Select probe SSIDs",
+      "source_line": 3563
+    },
+    {
+      "menu": "selectProbeSSIDsMenu",
+      "label": "Back",
+      "source_line": 3567
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Add SSIDs",
+      "source_line": 3625
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Add SSIDs",
+      "source_line": 3647
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Clear SSIDs",
+      "source_line": 3654
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Clear APs",
+      "source_line": 3658
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Clear Stations",
+      "source_line": 3662
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Select EP HTML File",
+      "source_line": 3667
+    },
+    {
+      "menu": "htmlMenu",
+      "label": "Back",
+      "source_line": 3670
+    },
+    {
+      "menu": "miniKbMenu",
+      "label": "a",
+      "source_line": 3692
+    },
+    {
+      "menu": "htmlMenu",
+      "label": "Back",
+      "source_line": 3699
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Select APs",
+      "source_line": 3704
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 3708
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Select ALL",
+      "source_line": 3712
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "View AP Info",
+      "source_line": 3747
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 3752
+    },
+    {
+      "menu": "apInfoMenu",
+      "label": "Back",
+      "source_line": 3769
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 3774
+    },
+    {
+      "menu": "wifiIPMenu",
+      "label": "Back",
+      "source_line": 3779
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Select Stations",
+      "source_line": 3785
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 3789
+    },
+    {
+      "menu": "wifiStationMenu",
+      "label": "Back",
+      "source_line": 3806
+    },
+    {
+      "menu": "wifiStationMenu",
+      "label": "Select ALL",
+      "source_line": 3810
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Join WiFi",
+      "source_line": 3853
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 3859
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Join Saved WiFi",
+      "source_line": 3935
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Manage Saved WiFi",
+      "source_line": 3940
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Start AP",
+      "source_line": 3945
+    },
+    {
+      "menu": "ssidsMenu",
+      "label": "Back",
+      "source_line": 3950
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Host AP Info",
+      "source_line": 3987
+    },
+    {
+      "menu": "wifiStationMenu",
+      "label": "Back",
+      "source_line": 3994
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Set MACs",
+      "source_line": 3998
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Shutdown WiFi",
+      "source_line": 4002
+    },
+    {
+      "menu": "wifiGeneralMenu",
+      "label": "Upload Wardrive Logs",
+      "source_line": 4011
+    },
+    {
+      "menu": "uploadAllMenu",
+      "label": "Back",
+      "source_line": 4024
+    },
+    {
+      "menu": "uploadAllMenu",
+      "label": "WiGLE",
+      "source_line": 4027
+    },
+    {
+      "menu": "uploadAllMenu",
+      "label": "WDGWars",
+      "source_line": 4073
+    },
+    {
+      "menu": "uploadAllMenu",
+      "label": "Both",
+      "source_line": 4119
+    },
+    {
+      "menu": "deleteAllMenu",
+      "label": "No",
+      "source_line": 4167
+    },
+    {
+      "menu": "deleteAllMenu",
+      "label": "Yes",
+      "source_line": 4170
+    },
+    {
+      "menu": "actionMenu",
+      "label": "Back",
+      "source_line": 4201
+    },
+    {
+      "menu": "actionMenu",
+      "label": "WiGLE",
+      "source_line": 4204
+    },
+    {
+      "menu": "actionMenu",
+      "label": "WDGWars",
+      "source_line": 4246
+    },
+    {
+      "menu": "actionMenu",
+      "label": "Both",
+      "source_line": 4287
+    },
+    {
+      "menu": "setMacMenu",
+      "label": "Back",
+      "source_line": 4333
+    },
+    {
+      "menu": "setMacMenu",
+      "label": "Generate AP MAC",
+      "source_line": 4338
+    },
+    {
+      "menu": "setMacMenu",
+      "label": "Generate STA MAC",
+      "source_line": 4344
+    },
+    {
+      "menu": "setMacMenu",
+      "label": "Clone AP MAC",
+      "source_line": 4351
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4356
+    },
+    {
+      "menu": "setMacMenu",
+      "label": "Clone STA MAC",
+      "source_line": 4372
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4377
+    },
+    {
+      "menu": "genAPMacMenu",
+      "label": "Back",
+      "source_line": 4396
+    },
+    {
+      "menu": "generateSSIDsMenu",
+      "label": "Back",
+      "source_line": 4402
+    },
+    {
+      "menu": "clearSSIDsMenu",
+      "label": "Back",
+      "source_line": 4408
+    },
+    {
+      "menu": "clearAPsMenu",
+      "label": "Back",
+      "source_line": 4412
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Back",
+      "source_line": 4443
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Sour Apple",
+      "source_line": 4446
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Apple Juice",
+      "source_line": 4451
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Swiftpair Spam",
+      "source_line": 4456
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Samsung BLE Spam",
+      "source_line": 4461
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Google BLE Spam",
+      "source_line": 4466
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Flipper BLE Spam",
+      "source_line": 4471
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "BLE Spam All",
+      "source_line": 4476
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "Spoof Airtag",
+      "source_line": 4486
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4491
+    },
+    {
+      "menu": "bluetoothAttackMenu",
+      "label": "FindMy Sound",
+      "source_line": 4532
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4537
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Live",
+      "source_line": 4541
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4582
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 4587
+    },
+    {
+      "menu": "attackModeMenu",
+      "label": "Back",
+      "source_line": 4722
+    },
+    {
+      "menu": "attackModeMenu",
+      "label": "Broadcast",
+      "source_line": 4727
+    },
+    {
+      "menu": "attackModeMenu",
+      "label": "All Stations",
+      "source_line": 4737
+    },
+    {
+      "menu": "attackModeMenu",
+      "label": "Pick Stations",
+      "source_line": 4746
+    },
+    {
+      "menu": "attackModeMenu",
+      "label": "Remove from Profile",
+      "source_line": 4756
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Back",
+      "source_line": 4770
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Review / Continue",
+      "source_line": 4773
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Select All",
+      "source_line": 4776
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Clear All",
+      "source_line": 4783
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "No APs - run AP scan",
+      "source_line": 4791
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Back",
+      "source_line": 4809
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Review / Continue",
+      "source_line": 4812
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Clear Profile",
+      "source_line": 4815
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "No APs - run AP/STA scan",
+      "source_line": 4823
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "Back",
+      "source_line": 4841
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "Review / Continue",
+      "source_line": 4844
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "Add Another AP",
+      "source_line": 4847
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "No stations",
+      "source_line": 4851
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "Select AP Stations",
+      "source_line": 4856
+    },
+    {
+      "menu": "attackStationMenu",
+      "label": "Clear AP Stations",
+      "source_line": 4863
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Back",
+      "source_line": 4884
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Review / Continue",
+      "source_line": 4887
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Select All",
+      "source_line": 4890
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "Clear All",
+      "source_line": 4895
+    },
+    {
+      "menu": "attackTargetMenu",
+      "label": "No saved SSIDs",
+      "source_line": 4901
+    },
+    {
+      "menu": "attackReviewMenu",
+      "label": "Back",
+      "source_line": 4916
+    },
+    {
+      "menu": "attackReviewMenu",
+      "label": "Add Another AP",
+      "source_line": 4959
+    },
+    {
+      "menu": "attackReviewMenu",
+      "label": "Add Another AP",
+      "source_line": 4965
+    },
+    {
+      "menu": "attackReviewMenu",
+      "label": "Start Attack",
+      "source_line": 4978
+    },
+    {
+      "menu": "attackReviewMenu",
+      "label": "Select targets first",
+      "source_line": 4982
+    },
+    {
+      "menu": "MAIN",
+      "label": "Recon",
+      "source_line": 5009
+    },
+    {
+      "menu": "MAIN",
+      "label": "WiFi",
+      "source_line": 5012
+    },
+    {
+      "menu": "MAIN",
+      "label": "Bluetooth",
+      "source_line": 5016
+    },
+    {
+      "menu": "MAIN",
+      "label": "GPS",
+      "source_line": 5022
+    },
+    {
+      "menu": "MAIN",
+      "label": "Device",
+      "source_line": 5027
+    },
+    {
+      "menu": "MAIN",
+      "label": "Reboot",
+      "source_line": 5030
+    },
+    {
+      "menu": "RECON",
+      "label": "Back",
+      "source_line": 5036
+    },
+    {
+      "menu": "RECON",
+      "label": "Start WiFi",
+      "source_line": 5039
+    },
+    {
+      "menu": "RECON",
+      "label": "Start BLE",
+      "source_line": 5045
+    },
+    {
+      "menu": "WIFI_ROOT",
+      "label": "Back",
+      "source_line": 5054
+    },
+    {
+      "menu": "WIFI_ROOT",
+      "label": "Sniffers",
+      "source_line": 5057
+    },
+    {
+      "menu": "WIFI_ROOT",
+      "label": "Scanners",
+      "source_line": 5060
+    },
+    {
+      "menu": "WIFI_ROOT",
+      "label": "Attacks",
+      "source_line": 5063
+    },
+    {
+      "menu": "WIFI_ROOT",
+      "label": "General",
+      "source_line": 5066
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "Back",
+      "source_line": 5072
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "Ping Scan",
+      "source_line": 5075
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "ARP Scan",
+      "source_line": 5080
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "Port Scan All",
+      "source_line": 5085
+    },
+    {
+      "menu": "wifiIPMenu",
+      "label": "Back",
+      "source_line": 5087
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "SSH Scan",
+      "source_line": 5101
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "Telnet Scan",
+      "source_line": 5106
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "SMTP Scan",
+      "source_line": 5111
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "DNS Scan",
+      "source_line": 5116
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "HTTP Scan",
+      "source_line": 5121
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "HTTPS Scan",
+      "source_line": 5126
+    },
+    {
+      "menu": "WIFI_SCANNER",
+      "label": "RDP Scan",
+      "source_line": 5131
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Back",
+      "source_line": 5139
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Probe Request Sniff",
+      "source_line": 5142
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Beacon Sniff",
+      "source_line": 5147
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Deauth Sniff",
+      "source_line": 5152
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Remote ID Scan",
+      "source_line": 5157
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Remote ID Devices",
+      "source_line": 5162
+    },
+    {
+      "menu": "remoteIdMenu",
+      "label": "Back",
+      "source_line": 5165
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Packet Count",
+      "source_line": 5179
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "EAPOL/PMKID Scan",
+      "source_line": 5186
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Packet Monitor",
+      "source_line": 5191
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "EAPOL/PMKID Scan",
+      "source_line": 5195
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Packet Monitor",
+      "source_line": 5200
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Channel Analyzer",
+      "source_line": 5206
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Channel Summary",
+      "source_line": 5212
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Raw Capture",
+      "source_line": 5218
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Detect Pwnagotchi",
+      "source_line": 5223
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Detect Pineapple",
+      "source_line": 5228
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Detect MultiSSID",
+      "source_line": 5233
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Scan AP/STA",
+      "source_line": 5238
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Fox Hunt",
+      "source_line": 5243
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "MAC Monitor",
+      "source_line": 5246
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "SAE Commit",
+      "source_line": 5251
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "CSI Motion Monitor",
+      "source_line": 5257
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 5260
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Run AP Scan First",
+      "source_line": 5264
+    },
+    {
+      "menu": "WIFI_SNIFFER",
+      "label": "Wardrive",
+      "source_line": 5284
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Back",
+      "source_line": 5294
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Beacon Spam List",
+      "source_line": 5297
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Beacon Spam Random",
+      "source_line": 5301
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Funny SSID Beacon",
+      "source_line": 5305
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Rick Roll Beacon",
+      "source_line": 5309
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Probe Req Flood",
+      "source_line": 5313
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Evil Portal",
+      "source_line": 5317
+    },
+    {
+      "menu": "wifiAPMenu",
+      "label": "Back",
+      "source_line": 5329
+    },
+    {
+      "menu": "ssidsMenu",
+      "label": "Back",
+      "source_line": 5332
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Deauth Flood",
+      "source_line": 5365
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "AP Clone Spam",
+      "source_line": 5369
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Karma",
+      "source_line": 5373
+    },
+    {
+      "menu": "selectProbeSSIDsMenu",
+      "label": "Back",
+      "source_line": 5382
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Bad Msg",
+      "source_line": 5399
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Assoc Sleep",
+      "source_line": 5403
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "SAE Commit Flood",
+      "source_line": 5407
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Channel Switch",
+      "source_line": 5411
+    },
+    {
+      "menu": "WIFI_ATTACK",
+      "label": "Quiet Time",
+      "source_line": 5415
+    },
+    {
+      "menu": "BLUETOOTH_ROOT",
+      "label": "Back",
+      "source_line": 5427
+    },
+    {
+      "menu": "BLUETOOTH_ROOT",
+      "label": "Sniffers",
+      "source_line": 5430
+    },
+    {
+      "menu": "BLUETOOTH_ROOT",
+      "label": "Bluetooth Attacks",
+      "source_line": 5433
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Back",
+      "source_line": 5439
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Bluetooth Sniffer",
+      "source_line": 5442
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Flipper Sniff",
+      "source_line": 5447
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "FindMy Sniff",
+      "source_line": 5452
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "iBeacon Sniff",
+      "source_line": 5457
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "iBeacon Info",
+      "source_line": 5462
+    },
+    {
+      "menu": "iBeaconMenu",
+      "label": "Back",
+      "source_line": 5465
+    },
+    {
+      "menu": "iBeaconInfoMenu",
+      "label": "Back",
+      "source_line": 5482
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "FindMy Monitor",
+      "source_line": 5505
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Detect Card Skimmers",
+      "source_line": 5510
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Bluetooth Analyzer",
+      "source_line": 5515
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Flock Sniff",
+      "source_line": 5521
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Meta Detect",
+      "source_line": 5526
+    },
+    {
+      "menu": "BLUETOOTH_SNIFFER",
+      "label": "Fox Hunt",
+      "source_line": 5531
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Back",
+      "source_line": 5544
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Update Firmware",
+      "source_line": 5550
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Backup SPIFFS",
+      "source_line": 5559
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Restore SPIFFS",
+      "source_line": 5562
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Save/Load Files",
+      "source_line": 5567
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Brightness",
+      "source_line": 5571
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Device Info",
+      "source_line": 5575
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Settings",
+      "source_line": 5580
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "Geofences",
+      "source_line": 5583
+    },
+    {
+      "menu": "DEVICE_ROOT",
+      "label": "SD File Browser",
+      "source_line": 5589
+    },
+    {
+      "menu": "GPS_ROOT",
+      "label": "Back",
+      "source_line": 5604
+    },
+    {
+      "menu": "GPS_ROOT",
+      "label": "GPS Data",
+      "source_line": 5607
+    },
+    {
+      "menu": "GPS_ROOT",
+      "label": "NMEA Stream",
+      "source_line": 5612
+    },
+    {
+      "menu": "GPS_ROOT",
+      "label": "GPS Tracker",
+      "source_line": 5617
+    },
+    {
+      "menu": "GPS_ROOT",
+      "label": "GPS POI",
+      "source_line": 5622
+    }
+  ],
+  "cli_commands": [
+    {
+      "symbol": "HELP_CMD",
+      "source_line": 276
+    },
+    {
+      "symbol": "STOPSCAN_CMD",
+      "source_line": 374
+    },
+    {
+      "symbol": "RECON_CMD",
+      "source_line": 400
+    },
+    {
+      "symbol": "GPS_DATA_CMD",
+      "source_line": 424
+    },
+    {
+      "symbol": "GPS_CMD",
+      "source_line": 437
+    },
+    {
+      "symbol": "NMEA_CMD",
+      "source_line": 509
+    },
+    {
+      "symbol": "LED_CMD",
+      "source_line": 521
+    },
+    {
+      "symbol": "LS_CMD",
+      "source_line": 547
+    },
+    {
+      "symbol": "PROTOCOL_INFO_CMD",
+      "source_line": 554
+    },
+    {
+      "symbol": "BACKUP_SPIFFS_CMD",
+      "source_line": 579
+    },
+    {
+      "symbol": "BACKUP_STATUS_CMD",
+      "source_line": 580
+    },
+    {
+      "symbol": "RESTORE_SPIFFS_CMD",
+      "source_line": 581
+    },
+    {
+      "symbol": "CH_CMD",
+      "source_line": 642
+    },
+    {
+      "symbol": "CLEARAP_CMD",
+      "source_line": 654
+    },
+    {
+      "symbol": "UPLOAD_CMD",
+      "source_line": 681
+    },
+    {
+      "symbol": "SETTINGS_CMD",
+      "source_line": 723
+    },
+    {
+      "symbol": "REBOOT_CMD",
+      "source_line": 755
+    },
+    {
+      "symbol": "SIGSTREN_CMD",
+      "source_line": 764
+    },
+    {
+      "symbol": "PACKET_COUNT_CMD",
+      "source_line": 842
+    },
+    {
+      "symbol": "GEOFENCE_CMD",
+      "source_line": 846
+    },
+    {
+      "symbol": "WARDRIVE_CMD",
+      "source_line": 889
+    },
+    {
+      "symbol": "KARMA_CMD",
+      "source_line": 900
+    },
+    {
+      "symbol": "EVIL_PORTAL_CMD",
+      "source_line": 930
+    },
+    {
+      "symbol": "SCAN_ALL_CMD",
+      "source_line": 984
+    },
+    {
+      "symbol": "CSI_MOTION_CMD",
+      "source_line": 990
+    },
+    {
+      "symbol": "SNIFF_RAW_CMD",
+      "source_line": 1015
+    },
+    {
+      "symbol": "SNIFF_BEACON_CMD",
+      "source_line": 1018
+    },
+    {
+      "symbol": "SNIFF_SAE_CMD",
+      "source_line": 1022
+    },
+    {
+      "symbol": "SNIFF_PROBE_CMD",
+      "source_line": 1026
+    },
+    {
+      "symbol": "SNIFF_DEAUTH_CMD",
+      "source_line": 1030
+    },
+    {
+      "symbol": "SNIFF_PWN_CMD",
+      "source_line": 1034
+    },
+    {
+      "symbol": "SNIFF_PINESCAN_CMD",
+      "source_line": 1038
+    },
+    {
+      "symbol": "SNIFF_MULTISSID_CMD",
+      "source_line": 1042
+    },
+    {
+      "symbol": "SNIFF_PMKID_CMD",
+      "source_line": 1046
+    },
+    {
+      "symbol": "MAC_TRACK_CMD",
+      "source_line": 1079
+    },
+    {
+      "symbol": "MAC_CMD",
+      "source_line": 1092
+    },
+    {
+      "symbol": "ATTACK_CMD",
+      "source_line": 1161
+    },
+    {
+      "symbol": "REMOTE_ID_CMD",
+      "source_line": 1332
+    },
+    {
+      "symbol": "BT_SNIFF_CMD",
+      "source_line": 1363
+    },
+    {
+      "symbol": "BT_SPOOFAT_CMD",
+      "source_line": 1398
+    },
+    {
+      "symbol": "BT_FINDMY_CMD",
+      "source_line": 1420
+    },
+    {
+      "symbol": "BT_SPAM_CMD",
+      "source_line": 1441
+    },
+    {
+      "symbol": "BT_SKIM_CMD",
+      "source_line": 1488
+    },
+    {
+      "symbol": "BRIGHTNESS_CMD",
+      "source_line": 1497
+    },
+    {
+      "symbol": "WARDRIVEPOI_CMD",
+      "source_line": 1521
+    },
+    {
+      "symbol": "UPDATE_CMD",
+      "source_line": 1542
+    },
+    {
+      "symbol": "PING_CMD",
+      "source_line": 1559
+    },
+    {
+      "symbol": "ARP_SCAN_CMD",
+      "source_line": 1565
+    },
+    {
+      "symbol": "GPS_POI_CMD",
+      "source_line": 1570
+    },
+    {
+      "symbol": "PORT_SCAN_CMD",
+      "source_line": 1617
+    },
+    {
+      "symbol": "LIST_AP_CMD",
+      "source_line": 1670
+    },
+    {
+      "symbol": "INFO_CMD",
+      "source_line": 1768
+    },
+    {
+      "symbol": "JOIN_CMD",
+      "source_line": 1783
+    },
+    {
+      "symbol": "SEL_CMD",
+      "source_line": 1819
+    },
+    {
+      "symbol": "SAVE_CMD",
+      "source_line": 1979
+    },
+    {
+      "symbol": "LOAD_CMD",
+      "source_line": 1996
+    },
+    {
+      "symbol": "ADD_CMD",
+      "source_line": 2015
+    },
+    {
+      "symbol": "SSID_CMD",
+      "source_line": 2180
+    }
+  ],
+  "upstream_numeric_collisions": {
+    "85": [
+      "BT_SCAN_IBEACON",
+      "BT_FINDMY_SOUND"
+    ]
+  }
+}

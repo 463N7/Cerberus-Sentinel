@@ -13,6 +13,8 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from build_toolchain import toolchain_provenance
+
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = ROOT / "artifacts" / "build" / "matched-build.json"
 TARGETS = {
@@ -35,7 +37,7 @@ def source_snapshot() -> dict:
             if path.is_file() and not any(p in {".pio", "managed_components", "__pycache__"} for p in path.parts):
                 paths.add(path)
     for directory in (ROOT, ROOT / "c5_firmware"):
-        for pattern in ("CMakeLists.txt", "platformio.ini", "partitions*.csv", "sdkconfig.defaults", "sdkconfig.*.defaults", "dependencies.lock"):
+        for pattern in ("CMakeLists.txt", "platformio.ini", "platformio.local.ini", "partitions*.csv", "sdkconfig.defaults", "sdkconfig.*.defaults", "dependencies.lock"):
             paths.update(directory.glob(pattern))
     for project, environment, _, _ in TARGETS.values():
         effective_config = project / f"sdkconfig.{environment}"
@@ -150,6 +152,7 @@ def inspect_target(name: str) -> dict:
         previous_end = image["offset"] + image["size"]
     return {"environment": environment, "chip": chip, "flash_size": flash_size,
             "project_version": description["project_version"], "idf_version": description["git_revision"],
+            "toolchain": toolchain_provenance(build, chip),
             "flash_settings": metadata["flash_settings"], "partitions": partitions, "images": images}
 
 

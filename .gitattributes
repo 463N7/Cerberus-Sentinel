@@ -5,3 +5,5 @@
 # Release checksums cover exact bytes, including line endings in notices/JSON.
 web/public/firmware/** -text -whitespace
 web/public/notices.txt -text -whitespace
+# SD resource manifest hashes cover exact shipped file bytes.
+sdcard/CERBERUS/** -text -whitespace

@@ -31,6 +31,8 @@ typedef enum {
     SENTINEL_DASHBOARD_WATCH,
     SENTINEL_DASHBOARD_DEMO = SENTINEL_DASHBOARD_WATCH, /* Legacy value. */
     SENTINEL_DASHBOARD_TOOLS,
+    SENTINEL_DASHBOARD_SCAN,
+    SENTINEL_DASHBOARD_ATTACK,
 } sentinel_dashboard_action_t;
 
 /* These draw functions share one bounded stripe buffer. Call from the UI task. */

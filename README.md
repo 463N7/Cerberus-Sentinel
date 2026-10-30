@@ -1,4 +1,29 @@
-# Cerberus Sentinel
+# Cerberus Sentinel — rev81 integration checkpoint
+
+This development contribution brings the accumulated Cerberus Unified work into
+Sentinel: integrated Wardriving, S3 BLE discovery and analysis, C5 Wi-Fi receive
+tools, selected-AP/client navigation, expansion support, and SD resources.
+The current checkpoint is **S3 rev81 `candidate-wifi-client-navigation`, paired
+with C5 firmware 60**. It remains a partial integration with known failures and
+pending hardware acceptance; it is not a production release or full Marauder port.
+
+Start with the [contribution overview and remaining work](docs/CONTRIBUTION_REV81.md)
+and [validation instructions](docs/VALIDATION.md). The
+[source-pinned coverage ledger](docs/MARAUDER_COVERAGE_LEDGER.md) tracks detailed
+mode status. [Build targets](INTEGRATION.md) and [SD resources](sdcard/README.md)
+describe the workspace layout. Older field-kit and feature-parity checkpoints
+are historical; the rev81 overview and coverage ledger describe the current state.
+
+The rev81 checkpoint recorded 79 passing host-check suites and five passing
+firmware builds. The revised Back controls still need an on-device Back/rescan
+check, and reported Wi-Fi **NO MEM**, **Association Sleep**, and **Bad Message**
+failures remain unresolved. GPS and six-C5 expansion operation remain unverified.
+
+The installer and 1.0.0 documentation below describe the imported stock Sentinel
+release. They do not install this rev81 contribution. No unified release is
+selected or published by this source contribution.
+
+# Imported Sentinel documentation
 
 **Watch. Scout. Sense. Learn.**
 
@@ -7,9 +32,10 @@
 The public [Cerberus USB Installer](https://463n7.github.io/Cerberus-Flasher/)
 guides desktop Chrome/Edge through a temporary S3 bridge, onboard C5 programming,
 final S3 programming, and a startup check using the board's USB connector.
-The firmware source repository remains private. Only the web application,
-release metadata, firmware binaries, and redistribution notices are published
-in the separate [Cerberus-Flasher repository](https://github.com/463N7/Cerberus-Flasher).
+Firmware source is in [Cerberus-Sentinel](https://github.com/463N7/Cerberus-Sentinel).
+The web application, release metadata, firmware binaries, and redistribution
+notices for the stock installer are published in the separate
+[Cerberus-Flasher repository](https://github.com/463N7/Cerberus-Flasher).
 
 **Version 1.0.0:** the owner reported successful testing of the existing feature
 build and approved the first production release on **2026-10-27**. That report
@@ -24,8 +50,9 @@ An original defensive wireless companion for production Cerberus, built on
 the working Cerberus Base firmware. A three-headed cyborg Cerberus guides
 you through Wi-Fi, Bluetooth LE, and 802.15.4 on the 320 × 480 touchscreen.
 
-**1.0.0 — production release.** Update both onboard processors using the matched
-release images.
+**Imported Sentinel 1.0.0 production release:** update both onboard processors
+using that release's matched images. This label does not apply to the development
+sources above.
 
 ## What is implemented
 

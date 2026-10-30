@@ -1,0 +1,25 @@
+CONNECTED NETWORK SCANNING - C5 FIRMWARE 32+
+
+Wi-Fi > Networks > select AP > Connect > PORT / SSH / TELNET SCAN.
+Enter the network password on the device. Credentials stay in RAM.
+
+MODE cycles: 16 common TCP ports, a custom TCP port/range, SSH LAN
+discovery, and Telnet LAN discovery. Custom ranges accept 1-65535.
+TARGET selects an IPv4 host on the connected subnet. The gateway is
+the initial default. LAN sweeps support /24 through /31, skip this
+device, and never silently scan only part of a larger subnet.
+
+START begins a job. STOP, leaving the screen or sleep cancels it.
+A lost connection also stops the job. Each connection times out after
+500 ms; only one socket is probed at a time. Large ranges take time.
+At most 64 open results are retained; the total-open counter continues.
+The screen and CSV disclose truncation and partial/cancelled results.
+
+SSH BANNER means the server actually sent an SSH identification prefix.
+TCP OPEN on port 22 or 23 alone does not identify SSH or Telnet.
+No login, password guessing, or SSH/Telnet session is performed.
+No-reply includes timeout or unreachable; it is not proof of filtering.
+
+NEXT pages results. SAVE TO SD exports a completed or stopped job to
+CERBERUS/LOGS/WIFInnnn.CSV, including counts and banner-prefix hex.
+Common TCP ports: 21,22,23,25,53,80,110,135,139,143,443,445,554,3389,8080,8443.

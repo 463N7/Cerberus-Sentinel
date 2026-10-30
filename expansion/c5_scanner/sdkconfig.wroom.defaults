@@ -1,0 +1,4 @@
+# The smallest ESP32-C5-WROOM-1U has 4 MB flash. Larger parts use the same image.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_SPIRAM=n

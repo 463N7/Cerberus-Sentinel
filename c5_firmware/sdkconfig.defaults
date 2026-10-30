@@ -2,6 +2,8 @@ CONFIG_IDF_TARGET="esp32c5"
 CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
 CONFIG_SPIRAM=n
+# CSI storage is provisioned once at Wi-Fi init; sessions never deinit Wi-Fi.
+CONFIG_ESP_WIFI_CSI_ENABLED=y
 
 # Keep fresh builds aligned with the runtime used by released C5 firmware 1.
 CONFIG_COMPILER_ASSERT_NDEBUG_EVALUATE=y

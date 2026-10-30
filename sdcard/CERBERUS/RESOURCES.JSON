@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "kind": "Cerberus development SD resources",
+  "database_entries": 40210,
+  "network_scanner_min_c5_firmware": 32,
+  "radio_lab_min_c5_firmware": 33,
+  "directories": [
+    "CERBERUS/LOGS",
+    "CERBERUS/FIRMWARE",
+    "CERBERUS/SCRIPTS",
+    "CERBERUS/HELP",
+    "CERBERUS/TESTS",
+    "CERBERUS/PORTAL"
+  ],
+  "files": [
+    {
+      "path": "CERBERUS/HELP/NETWORK.TXT",
+      "bytes": 1353,
+      "sha256": "1bb5735b244b5642b21631ebc6e0afdaf1b4448ce2cf2d755fa28c06976a9eba"
+    },
+    {
+      "path": "CERBERUS/HELP/NOTICES.TXT",
+      "bytes": 958,
+      "sha256": "d24a4ea966e84bef0692319c81579b1cdd5143d86e866ced922e61bd3c0db9fe"
+    },
+    {
+      "path": "CERBERUS/HELP/RADIO.TXT",
+      "bytes": 1702,
+      "sha256": "5ad8525e0eb41f900313eb6578598376531b818f2d9c778abf72c628ca83828e"
+    },
+    {
+      "path": "CERBERUS/HELP/START.TXT",
+      "bytes": 1529,
+      "sha256": "48102943ab6722127af0e795c26294d67c7fbccbf5064f6a25f685716f6e5fb3"
+    },
+    {
+      "path": "CERBERUS/PORTAL/INDEX.HTM",
+      "bytes": 1070,
+      "sha256": "7c7e74a0771e4b4cfa034d9b7c7d90724a9555ecca72d6ebf6a0008e31b7f08e"
+    },
+    {
+      "path": "CERBERUS/RECON.DB",
+      "bytes": 6333004,
+      "sha256": "bb6a366efd96e1f562a3ce235ce84b115d1c4c295be09e92844dacd6c8cc2357"
+    },
+    {
+      "path": "CERBERUS/SCRIPTS/HELLO.CBS",
+      "bytes": 277,
+      "sha256": "3b62d2e9842452ad76324658fee5e932b982ec63864a8822126743cb777a649b"
+    },
+    {
+      "path": "CERBERUS/TESTS/BLE.TXT",
+      "bytes": 13,
+      "sha256": "75d560b7eab876166ebc9100c9d5527c0320401e0eb27adc9cbd01511736f125"
+    },
+    {
+      "path": "CERBERUS/TESTS/WIFI.TXT",
+      "bytes": 13,
+      "sha256": "f9e271f6f141e4fb8c203ab34d130ccbc83eb8f411260cf01b16b923f42913b6"
+    }
+  ]
+}

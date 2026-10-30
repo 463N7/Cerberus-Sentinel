@@ -1,0 +1,28 @@
+RADIO LAB - DEVELOPMENT TEST ENGINES
+
+Home > Attack > RADIO LAB / S3 + C5.
+C5 sends one standard Wi-Fi beacon every 100 ms for the selected SSID.
+S3 sends one standard, nonconnectable BLE name advertisement every 100 ms.
+These discovery tests are not the complete Marauder attack feature set.
+
+Tap the mode, channel or duration to configure; START explicitly transmits.
+STOP, leaving the screen, sleep or three seconds without UI contact stops.
+Wi-Fi supports channels 1, 6, 11, 36, 40, 44 and 48, subject to driver support.
+The C5 must be disconnected and its other radio jobs stopped before a beacon
+test. It restores the previous channel/band afterward. S3 BLE is separate.
+The UI offers 10, 20 or 30 seconds. Nothing transmits automatically at boot.
+
+CERBERUS/TESTS/WIFI.TXT is one printable SSID, 1-32 bytes, optional final newline.
+CERBERUS/TESTS/BLE.TXT is one printable BLE name, 1-26 bytes, optional newline.
+Missing files use the displayed Cerberus lab names; malformed files are rejected.
+These are text profiles, not executable code. Firmware stays in processor flash.
+
+Wi-Fi counts report driver acceptance, not confirmed reception over the air.
+BLE does not report a measured transmitted-packet count. SAVE REPORT records
+the terminal state/error and sampled minimum internal heap in CERBERUS/LOGS.
+The radio serial command reads both jobs without renewing their control leases.
+The reports serial command reads bounded network CSVs without USB SD handover.
+
+Selected-AP tests use manual Stop and display live C5 accepted-frame and S3
+received-frame rates where S3 reception is available. This is separate from
+the timed Radio Lab discovery test. Stop before leaving the test unattended.

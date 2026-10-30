@@ -1,4 +1,5 @@
 .pio/
+platformio.local.ini
 .codex-remote-attachments/
 build/
 managed_components/

@@ -47,6 +47,23 @@ static bool drone_message(const uint8_t *p, sentinel_watch_protocol_record_t *r)
             (p[19] & 15U) > 12U || (p[19] >> 4) > 6U ||
             (p[20] & 15U) > 4U || (p[20] >> 4) > 6U ||
             (stamp > 36000U && stamp != UINT16_MAX) || (p[23] & 0xf0U) || p[24]) return false;
+        r->motion.flags = SENTINEL_WATCH_MOTION_LOCATION_PRESENT;
+        uint16_t speed = (p[1] & 1U) ? (uint16_t)(255U + 3U * p[3]) : p[3];
+        if (speed <= 1017U) {
+            r->motion.speed_qms = speed;
+            r->motion.flags |= SENTINEL_WATCH_MOTION_SPEED;
+        }
+        uint16_t direction = (uint16_t)(p[2] + ((p[1] & 2U) ? 180U : 0U));
+        if (direction <= 360U) {
+            r->motion.direction_deg = direction;
+            r->motion.flags |= SENTINEL_WATCH_MOTION_DIRECTION;
+        }
+        uint16_t height = le16(p + 17U);
+        if (height) {
+            r->motion.height_encoded = height;
+            r->motion.flags |= SENTINEL_WATCH_MOTION_HEIGHT;
+            if (p[1] & 4U) r->motion.flags |= SENTINEL_WATCH_MOTION_HEIGHT_AGL;
+        }
         if (lat || lon) {
             r->latitude_e7 = lat; r->longitude_e7 = lon;
             r->flags |= SENTINEL_WATCH_PROTOCOL_HAS_POSITION;
@@ -92,6 +109,37 @@ static bool drone_payload(const uint8_t *p, size_t n, sentinel_watch_protocol_re
         if (!drone_message(message, r)) return false;
     }
     return true;
+}
+
+/* The caller has matched the six-byte Remote ID service identifier. Instance
+ * and requestor identifiers are local NAN fields, not aircraft identities.
+ * Optional filters remain opaque and are bounded by their encoded lengths. */
+static bool drone_nan_descriptor(const uint8_t *p, size_t n,
+    sentinel_watch_protocol_record_t *r)
+{
+    if (n < 9U) return false;
+    uint8_t control = p[8];
+    /* Types 0/1/2 are Publish/Subscribe/Follow-up. Bit 5 is range-limited;
+     * it adds no bytes. In particular, 0x10 is Publish with service info. */
+    if (!(control & 0x10U) || (control & 3U) == 3U || (control & 0x80U)) return false;
+    size_t pos = 9U;
+    if (control & 0x40U) {
+        if (n - pos < 2U) return false;
+        pos += 2U;
+    }
+    for (unsigned flag = 0x04U; flag <= 0x08U; flag <<= 1U) {
+        if (!(control & flag)) continue;
+        if (pos == n) return false;
+        size_t filter_size = p[pos++];
+        if (filter_size > n - pos) return false;
+        pos += filter_size;
+    }
+    if (pos == n) return false;
+    size_t info_size = p[pos++];
+    /* One counter byte followed by a strict MessagePack, with no trailing
+     * descriptor bytes or bare single-message Wi-Fi payload accepted. */
+    if (info_size != n - pos || info_size < 29U || (p[pos + 1U] >> 4) != 15U) return false;
+    return drone_payload(p + pos + 1U, info_size - 1U, r);
 }
 
 bool sentinel_watch_protocol_decode_ble(const uint8_t *data, size_t length,
@@ -272,7 +320,9 @@ bool sentinel_watch_protocol_decode_wifi(const uint8_t *data, size_t length,
             if (n > length - pos) return false;
             const uint8_t *p = data + pos;
             if (type == 0U && n > 32U) return false;
-            if (type == 221U && n >= 4U && p[0] == 0xfaU && p[1] == 0x0bU && p[2] == 0xbcU && p[3] == 0x0dU) {
+            if (type == 221U && n >= 4U && p[3] == 0x0dU &&
+                ((p[0] == 0xfaU && p[1] == 0x0bU && p[2] == 0xbcU) ||
+                 (p[0] == 0x90U && p[1] == 0x3aU && p[2] == 0xe6U))) {
                 if (found || n < 6U || (p[5] >> 4) != 15U || !drone_payload(p + 5U, n - 5U, &pending)) return false;
                 found = true;
             }
@@ -288,18 +338,18 @@ bool sentinel_watch_protocol_decode_wifi(const uint8_t *data, size_t length,
         }
         pending.transport = SENTINEL_WATCH_TRANSPORT_WIFI_BEACON;
     } else if (data[0] == 0xd0U) {
+        static const uint8_t nan_destination[6] = {0x51,0x6f,0x9a,1,0,0};
         static const uint8_t nan_header[6] = {4,9,0x50,0x6f,0x9a,0x13};
         static const uint8_t service_id[6] = {0x88,0x69,0x19,0x9d,0x92,9};
-        if (length < 30U || memcmp(data + 24U, nan_header, 6U)) return false;
+        if (length < 30U || memcmp(data + 4U, nan_destination, 6U) ||
+            memcmp(data + 24U, nan_header, 6U)) return false;
         for (size_t pos = 30U; pos < length;) {
             if (length - pos < 3U) return false;
             uint8_t type = data[pos++]; size_t n = le16(data + pos); pos += 2U;
             if (n > length - pos) return false;
             const uint8_t *p = data + pos;
             if (type == 3U && n >= 6U && !memcmp(p, service_id, 6U)) {
-                /* Fixed ODID follow-up descriptor, no optional filters. */
-                if (found || n < 12U || p[6] != 1U || p[8] != 0x10U ||
-                    p[9] != n - 10U || (p[11] >> 4) != 15U || !drone_payload(p + 11U, n - 11U, &pending)) return false;
+                if (found || !drone_nan_descriptor(p, n, &pending)) return false;
                 found = true;
             }
             pos += n;

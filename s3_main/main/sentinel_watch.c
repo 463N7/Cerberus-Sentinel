@@ -11,7 +11,94 @@ void sentinel_watch_init(sentinel_watch_t *watch)
         memset(watch, 0, sizeof(*watch));
         watch->enabled_mask = (1U << SENTINEL_WATCH_CATEGORY_COUNT) - 2U;
         watch->alert_mask = watch->enabled_mask & ~(1U << SENTINEL_WATCH_BEACON);
+        watch->minimum_confidence = SENTINEL_WATCH_CONFIDENCE_MEDIUM;
     }
+}
+
+static bool same_device(const sentinel_watch_device_policy_t *p, const sentinel_watch_entry_t *entry)
+{
+    return p->radio == entry->radio && p->address_type == entry->address_type &&
+        memcmp(p->address, entry->address, 6) == 0;
+}
+static bool alert_allowed(const sentinel_watch_t *watch, const sentinel_watch_entry_t *entry, uint32_t now)
+{
+    if (watch->muted || entry->match.confidence < watch->minimum_confidence) return false;
+    for (unsigned i = 0; i < watch->policy_count; ++i) {
+        const sentinel_watch_device_policy_t *p = &watch->policies[i];
+        if (same_device(p, entry) && (p->ignored ||
+            (uint32_t)(now - p->snooze_since_ms) < p->snooze_duration_ms)) return false;
+    }
+    return true;
+}
+static void prune_alerts(sentinel_watch_t *watch, uint32_t now)
+{
+    uint8_t kept = 0;
+    for (uint8_t i = 0; i < watch->queue_count; ++i) {
+        uint8_t slot = (watch->queue_head + i) % SENTINEL_WATCH_QUEUE_CAPACITY;
+        if (!alert_allowed(watch, &watch->queue[slot], now)) continue;
+        watch->queue[(watch->queue_head + kept++) % SENTINEL_WATCH_QUEUE_CAPACITY] = watch->queue[slot];
+    }
+    watch->queue_count = kept;
+    if (watch->alert_active && !alert_allowed(watch, &watch->alert, now)) watch->alert_active = false;
+}
+static sentinel_watch_device_policy_t *device_policy(sentinel_watch_t *watch,
+    const sentinel_watch_entry_t *entry, uint32_t now)
+{
+    if (!watch || !entry || entry->radio == SENTINEL_WATCH_RADIO_ENVIRONMENT) return NULL;
+    for (unsigned i = 0; i < watch->policy_count; ++i)
+        if (same_device(&watch->policies[i], entry)) return &watch->policies[i];
+    unsigned slot = watch->policy_count;
+    for (unsigned i = 0; i < watch->policy_count; ++i)
+        if (!watch->policies[i].ignored &&
+            (uint32_t)(now - watch->policies[i].snooze_since_ms) >= watch->policies[i].snooze_duration_ms) { slot = i; break; }
+    if (slot >= SENTINEL_WATCH_POLICY_CAPACITY) return NULL;
+    if (slot == watch->policy_count) ++watch->policy_count;
+    sentinel_watch_device_policy_t *p = &watch->policies[slot];
+    memset(p, 0, sizeof(*p));
+    p->radio = entry->radio; p->address_type = entry->address_type;
+    memcpy(p->address, entry->address, 6);
+    return p;
+}
+void sentinel_watch_set_alert_filter(sentinel_watch_t *watch, sentinel_watch_confidence_t minimum,
+    bool muted, uint32_t now_ms)
+{
+    if (!watch || minimum < SENTINEL_WATCH_CONFIDENCE_LOW || minimum > SENTINEL_WATCH_CONFIDENCE_HIGH) return;
+    watch->minimum_confidence = minimum; watch->muted = muted; prune_alerts(watch, now_ms);
+}
+bool sentinel_watch_is_ignored(const sentinel_watch_t *watch, const sentinel_watch_entry_t *entry)
+{
+    if (!watch || !entry) return false;
+    for (unsigned i = 0; i < watch->policy_count; ++i)
+        if (same_device(&watch->policies[i], entry)) return watch->policies[i].ignored;
+    return false;
+}
+bool sentinel_watch_set_ignored(sentinel_watch_t *watch, const sentinel_watch_entry_t *entry,
+    bool ignored, uint32_t now_ms)
+{
+    sentinel_watch_device_policy_t *p = device_policy(watch, entry, now_ms);
+    if (!p) return false;
+    p->ignored = ignored; prune_alerts(watch, now_ms); return true;
+}
+bool sentinel_watch_snooze(sentinel_watch_t *watch, const sentinel_watch_entry_t *entry,
+    uint32_t duration_ms, uint32_t now_ms)
+{
+    if (duration_ms > 4U * 60U * 60U * 1000U) return false;
+    sentinel_watch_device_policy_t *p = device_policy(watch, entry, now_ms);
+    if (!p) return false;
+    p->snooze_since_ms = now_ms; p->snooze_duration_ms = duration_ms;
+    prune_alerts(watch, now_ms); return true;
+}
+void sentinel_watch_clear_device_policies(sentinel_watch_t *watch)
+{
+    if (watch) { watch->policy_count = 0; memset(watch->policies, 0, sizeof(watch->policies)); }
+}
+void sentinel_watch_clear_history(sentinel_watch_t *watch)
+{
+    if (!watch) return;
+    memset(watch->history, 0, sizeof(watch->history)); memset(watch->queue, 0, sizeof(watch->queue));
+    memset(&watch->alert, 0, sizeof(watch->alert));
+    watch->history_count = watch->history_next = watch->queue_count = watch->queue_head = 0;
+    watch->alert_active = false; watch->matches = 0;
 }
 
 bool sentinel_watch_observe(sentinel_watch_t *watch, sentinel_watch_radio_t radio,
@@ -77,7 +164,9 @@ bool sentinel_watch_observe_details(sentinel_watch_t *watch, sentinel_watch_radi
             break;
         }
     }
-    bool notify = entry == NULL || (uint32_t)(now_ms - entry->last_ms) >= SENTINEL_WATCH_RETURN_MS;
+    bool was_suppressed = entry && entry->alerts_suppressed;
+    bool notify = entry == NULL || (uint32_t)(now_ms - entry->last_ms) >= SENTINEL_WATCH_RETURN_MS ||
+        match->confidence > entry->match.confidence;
     if (entry == NULL) {
         entry = &watch->history[watch->history_next];
         watch->history_next = (watch->history_next + 1U) % SENTINEL_WATCH_HISTORY_CAPACITY;
@@ -100,7 +189,11 @@ bool sentinel_watch_observe_details(sentinel_watch_t *watch, sentinel_watch_radi
     for (size_t i = 0; i < length; ++i)
         entry->name[i] = (unsigned char)name[i] >= 32 && (unsigned char)name[i] <= 126 ? name[i] : '?';
     entry->name[length] = 0;
-    if (!notify || mode != SENTINEL_WATCH_MODE_ALERT) return false;
+    entry->alerts_suppressed = !alert_allowed(watch, entry, now_ms);
+    /* New corroboration or an expired snooze may become alertable even when
+     * this address has remained in view. Existing category cooldown still applies. */
+    notify |= was_suppressed && !entry->alerts_suppressed;
+    if (!notify || mode != SENTINEL_WATCH_MODE_ALERT || entry->alerts_suppressed) return false;
     uint32_t bit = 1U << match->category;
     if ((watch->category_alert_mask & bit) &&
         (uint32_t)(now_ms - watch->category_alert_ms[match->category]) < SENTINEL_WATCH_COOLDOWN_MS) {

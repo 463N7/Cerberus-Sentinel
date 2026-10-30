@@ -34,6 +34,7 @@ typedef struct {
     bool signal_valid;
     bool marked;
     bool review;
+    bool selected;
 } sentinel_scan_row_t;
 
 typedef struct {
@@ -41,8 +42,14 @@ typedef struct {
     sentinel_view_state_t state;
     const char *subtitle;
     const char *count_label; /* Optional summary label; at most 18 visible characters. */
+    const char *sort_label; /* Optional BLE sort control in the upper-right badge. */
+    const char *age_label; /* Optional Wi-Fi/BLE age control below the state/sort badge. */
     const char *message;
     const char *hint; /* Capture age / context; always visible at y352 when nonempty. */
+    const char *tools_label; /* Optional action for the bottom-right control. */
+    bool tools_disabled;
+    bool selection_mode;
+    uint8_t selection_count;
     uint16_t total_count;
     uint16_t page;       /* Zero-based page index. */
     uint16_t page_count;
@@ -66,12 +73,20 @@ typedef enum {
     SENTINEL_VIEW_ROW1,
     SENTINEL_VIEW_ROW2,
     SENTINEL_VIEW_ROW3,
+    SENTINEL_VIEW_CLEAR,
+    SENTINEL_VIEW_SORT,
+    SENTINEL_VIEW_AGE,
 } sentinel_view_action_t;
 
 /* Owns y=48..410 only. Caller owns the header and the navigation footer.
  * Result cards: x8,y126+56*row,w304,h52 (4 per page).
  * Controls: y364,h42; Prev x8,w68; Stop/Scan x84,w68; Next x160,w68;
  * Tools x236,w76. Disabled controls are not returned by hit testing.
+ * BLE summary controls: x224..311,y48..97 is Sort unless age_label is
+ * nonempty; then Sort uses y48..73 and Age y74..97. Wi-Fi age_label uses
+ * the same lower Age area with a noninteractive state badge above it.
+ * Age is unavailable for other kinds, selection-mode or OFFLINE views.
+ * Left summary ends before x216. Wi-Fi never returns Sort.
  * Strings need only remain valid for the duration of each call.
  * Preserve the last actual records during a new sweep by passing them again.
  */

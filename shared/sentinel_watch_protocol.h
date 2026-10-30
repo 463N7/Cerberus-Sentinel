@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "sentinel_watch_motion.h"
 
 #define SENTINEL_WATCH_PROTOCOL_BLE_MAX 255U
 #define SENTINEL_WATCH_PROTOCOL_WIFI_MAX 2304U
@@ -41,10 +42,17 @@ typedef struct {
     /* Drone serial/registration ID when printable; Pwnagotchi display name.
      * Never truncate a binary Remote ID into a misleading text identifier. */
     char id[SENTINEL_WATCH_PROTOCOL_ID_MAX + 1U];
+    sentinel_watch_motion_t motion; /* Separate Location group; not legacy row flags. */
 } sentinel_watch_protocol_record_t;
 
 /* BLE: one complete advertisement, no fragment/scan-response concatenation.
  * Wi-Fi: raw management frame WITHOUT radiotap or the trailing four-byte FCS.
+ * Remote ID Wi-Fi accepts FA:0B:BC and legacy 90:3A:E6 beacon vendor IEs, or
+ * NAN service descriptors addressed to 51:6F:9A:01:00:00. NAN permits service
+ * types Publish/Subscribe/Follow-up, any instance/requestor, range-limited
+ * flags and bounded bitmap/matching/response filters. Service information
+ * must consume its descriptor exactly and contain a counter + MessagePack.
+ * Wi-Fi never accepts bare single-message payloads or fragment reassembly.
  * Both functions clear output on rejection and validate enclosing TLV lengths.
  * Merge ID/location fields only across identical MAC, address type and kind.
  * Unknown/missing fields remain absent; do not substitute receiver position. */

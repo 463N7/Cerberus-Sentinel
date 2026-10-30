@@ -13,6 +13,12 @@ uint8_t cerberus_ble_scanner_get_phase(void);
 esp_err_t cerberus_ble_scanner_start(void);
 esp_err_t cerberus_ble_scanner_stop(void);
 esp_err_t cerberus_ble_watch_get_status(uint8_t generation, cerberus_watch_scan_status_payload_t *out);
+esp_err_t cerberus_ble_watch_get_timing(const cerberus_watch_scan_timing_request_t *request,
+    cerberus_watch_scan_timing_payload_t *out);
+esp_err_t cerberus_ble_watch_get_motion(const cerberus_watch_scan_data_request_t *request,
+    cerberus_watch_scan_motion_payload_t *out);
+esp_err_t cerberus_ble_watch_get_motion_timing(const cerberus_watch_scan_data_request_t *request,
+    cerberus_watch_scan_timing_payload_t *out);
 esp_err_t cerberus_ble_watch_get_data(const cerberus_watch_scan_data_request_t *request,
     cerberus_watch_scan_data_payload_t *out);
 esp_err_t cerberus_ble_watch_get_activity(uint8_t generation, cerberus_ble_activity_payload_t *out);

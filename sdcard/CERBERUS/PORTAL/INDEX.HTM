@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cerberus local portal test</title>
+<style>
+body{font:16px system-ui,sans-serif;min-height:100vh;margin:0;display:grid;place-items:center;background:#101820;color:#f4f7fb}
+main{width:min(90vw,24rem);padding:1.5rem;border:1px solid #385060;border-radius:1rem;background:#192733}
+label,input,button{display:block;width:100%;box-sizing:border-box}
+input,button{font:inherit;padding:.7rem;margin-top:.5rem;border-radius:.5rem}
+input{background:#0b1720;color:inherit;border:1px solid #5b7280}
+button{background:#f3cf42;border:0;color:#101820;font-weight:700;cursor:pointer}
+small{color:#bbcad5}
+</style>
+<main>
+<h1>Local portal test</h1>
+<p>This Cerberus lab page records a test name on the device.</p>
+<form action="/submit" method="post">
+<label for="name">Test name</label>
+<input id="name" name="name" maxlength="95" required>
+<button type="submit">Submit</button>
+</form>
+<p><small>Use on your own test network.</small></p>
+</main>
+</html>

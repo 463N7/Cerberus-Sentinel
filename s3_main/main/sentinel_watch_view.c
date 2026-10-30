@@ -763,10 +763,12 @@ static void guardian(const snapshot_t *s)
     }
 }
 
+#include "recon_pixel_art.h"
 static esp_err_t draw_art(const snapshot_t *s)
 {
     for(stripe_y=ART_Y;stripe_y<ART_Y+ART_H;stripe_y+=STRIPE_ROWS){
-        background(s);guardian(s);
+        if (s->demo) { background(s); guardian(s); }
+        else recon_pixel_guardian(s);
         TRY(cerberus_display_draw_rgb565_bitmap(ART_X,(uint16_t)stripe_y,ART_W,STRIPE_ROWS,stripe));
     }
     return ESP_OK;
@@ -796,7 +798,7 @@ static snapshot_t snapshot(const sentinel_watch_view_t *v,uint32_t now)
     snapshot_t s={0};s.scene=v->scene;s.confidence=v->confidence;s.demo=v->demo;
     s.paused=v->paused;s.online=v->radio_online;s.details=v->has_details;
     s.observations=v->observation_count;s.matches=v->match_count;
-    s.frame=v->paused && !v->demo?0:(uint8_t)((now/400U)%20U);
+    s.frame=(v->paused || !v->radio_online) && !v->demo?0:(uint8_t)((now/400U)%20U);
     copy_text(s.phase,sizeof(s.phase),v->demo?"SCENE GALLERY / NO LIVE DETECTION":v->phase);
     if(!s.phase[0])copy_text(s.phase,sizeof(s.phase),v->paused?"WATCH PAUSED":v->radio_online?"READY TO WATCH":"RADIO OFFLINE");
     copy_text(s.title,sizeof(s.title),v->title && v->title[0]?v->title:scene_title(v->scene));
@@ -814,8 +816,8 @@ static esp_err_t draw_header(const snapshot_t *s)
 {
     char linebuf[52];uint16_t a=accent(s->scene);
     TRY(cerberus_display_fill_rect(0,0,320,88,BG));
-    TRY(text(12,12,"CERBERUS",WHITE,BG,2));TRY(text(13,32,"SENTINEL / WATCH",MUTED,BG,1));
-    const char *badge=s->demo?"DEMO":s->paused?"PAUSED":s->online?"WATCH":"OFFLINE";
+    TRY(text(12,12,"CERBERUS",WHITE,BG,2));TRY(text(13,32,"FIELD KIT / RECON",MUTED,BG,1));
+    const char *badge=s->demo?"DEMO":s->paused?"PAUSED":s->online?"RECON":"OFFLINE";
     TRY(cerberus_display_fill_rect(238,20,70,18,PANEL));
     TRY(text(273-(int)strlen(badge)*3,25,badge,s->demo?LILAC:s->online?a:AMBER,PANEL,1));
     TRY(cerberus_display_fill_rect(12,48,296,37,PANEL));
@@ -842,7 +844,7 @@ static esp_err_t draw_information(const snapshot_t *s)
 static esp_err_t draw_controls(const snapshot_t *s)
 {
     for(unsigned i=0;i<4;++i){const target_t *t=&targets[i];
-        const char *label=i==0?"BACK":i==1?(s->paused?"RESUME":"PAUSE"):i==2?"HISTORY":s->demo?"NEXT":"DEMO";
+        const char *label=i==0?"BACK":i==1?(s->paused?"RESUME":"PAUSE"):i==2?"LOG":s->demo?"NEXT":"OPTIONS";
         bool enabled=!(s->demo && (i==1 || i==2));uint16_t fg=enabled?WHITE:EDGE;
         TRY(cerberus_display_fill_rect(t->x,t->y,t->w,t->h,PANEL));
         TRY(cerberus_display_fill_rect(t->x,t->y,t->w,1,enabled?accent(s->scene):EDGE));
@@ -871,7 +873,8 @@ esp_err_t sentinel_watch_view_update(const sentinel_watch_view_t *v,uint32_t now
     previous_valid=false;
     if(s.scene!=previous.scene || s.demo!=previous.demo || s.paused!=previous.paused || s.online!=previous.online ||
         s.observations!=previous.observations || s.matches!=previous.matches || strcmp(s.phase,previous.phase))TRY(draw_header(&s));
-    if(s.scene!=previous.scene || s.frame!=previous.frame)TRY(draw_art(&s));
+    if(s.scene!=previous.scene || s.frame!=previous.frame || s.demo!=previous.demo ||
+        s.paused!=previous.paused || s.online!=previous.online)TRY(draw_art(&s));
     if(s.scene!=previous.scene || s.demo!=previous.demo || s.confidence!=previous.confidence || s.details!=previous.details ||
         strcmp(s.title,previous.title)||strcmp(s.evidence,previous.evidence)||strcmp(s.detail,previous.detail))TRY(draw_information(&s));
     if(s.scene!=previous.scene || s.demo!=previous.demo || s.paused!=previous.paused)TRY(draw_controls(&s));

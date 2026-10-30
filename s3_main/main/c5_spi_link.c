@@ -1,16 +1,23 @@
 #include "c5_spi_link.h"
+#include "c5_ready_wait.h"
+#include "radio_bus.h"
 
 #include "cerberus_pins.h"
 #include "cerberus_protocol.h"
+#include "wifi_packet_monitor_core.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
+#include "esp_attr.h"
+#include "esp_intr_alloc.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <string.h>
 
 #define C5_SPI_HOST SPI3_HOST
@@ -23,8 +30,96 @@
 static SemaphoreHandle_t link_mutex;
 static spi_device_handle_t c5_spi;
 static uint32_t c5_spi_actual_clock_hz;
+static uint32_t peer_firmware_version; /* Accessed only under link_mutex. */
 static uint8_t sequence;
 static const char *TAG = "c5_spi";
+static DRAM_ATTR atomic_uint ready_fall_epoch;
+_Static_assert(sizeof(atomic_uint) == sizeof(uint32_t) && _Alignof(atomic_uint) >= 4U,
+    "READY epoch requires an aligned 32-bit atomic object");
+/* IDF's S3 -mdisable-hardware-atomics makes the generic macro 1 because RMW
+ * may need support code. Our single-writer ISR uses only loads/stores, which
+ * GCC emits as inline l32i/s32i + memw under those exact flags. The production
+ * object is checked by tools/check_c5_ready_iram.py; do not replace these
+ * operations with fetch_add/CAS without repeating that IRAM inspection. */
+#if !defined(CONFIG_IDF_TARGET_ESP32S3)
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2, "READY host requires lock-free atomics");
+#endif
+static cerberus_c5_transport_diagnostics_t transport_diagnostics;
+static portMUX_TYPE diagnostics_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t mutex_acquired_us;
+
+static uint32_t transport_now_us(void)
+{
+    return (uint32_t)esp_timer_get_time();
+}
+
+static void diagnostic_increment(uint32_t *counter)
+{
+    portENTER_CRITICAL(&diagnostics_lock);
+    if (*counter != UINT32_MAX) ++*counter;
+    portEXIT_CRITICAL(&diagnostics_lock);
+}
+
+static void diagnostic_maximum(uint32_t *maximum, uint32_t value)
+{
+    portENTER_CRITICAL(&diagnostics_lock);
+    if (value > *maximum) *maximum = value;
+    portEXIT_CRITICAL(&diagnostics_lock);
+}
+
+static BaseType_t take_link_mutex(TickType_t ticks)
+{
+    uint32_t started = transport_now_us();
+    BaseType_t acquired = xSemaphoreTake(link_mutex, ticks);
+    uint32_t finished = transport_now_us();
+    diagnostic_maximum(&transport_diagnostics.max_mutex_wait_us, finished - started);
+    if (acquired == pdTRUE) mutex_acquired_us = finished;
+    else diagnostic_increment(&transport_diagnostics.mutex_timeouts);
+    return acquired;
+}
+
+static void give_link_mutex(void)
+{
+    diagnostic_maximum(&transport_diagnostics.max_mutex_hold_us,
+        transport_now_us() - mutex_acquired_us);
+    xSemaphoreGive(link_mutex);
+}
+
+void c5_spi_link_get_transport_diagnostics(cerberus_c5_transport_diagnostics_t *out)
+{
+    if (out == NULL) return;
+    portENTER_CRITICAL(&diagnostics_lock);
+    *out = transport_diagnostics;
+    portEXIT_CRITICAL(&diagnostics_lock);
+    out->ready_fall_edges = atomic_load_explicit(&ready_fall_epoch, memory_order_relaxed);
+}
+
+static void IRAM_ATTR ready_falling_isr(void *argument)
+{
+    (void)argument;
+    /* The per-pin ISR is the only writer and cannot reenter itself. Loads and
+     * stores are lock-free, aligned, and remain in IRAM with the counter in
+     * internal DRAM; no allocator, logging, or task API runs in this ISR. */
+    unsigned epoch = atomic_load_explicit(&ready_fall_epoch, memory_order_relaxed);
+    atomic_store_explicit(&ready_fall_epoch, epoch + 1U, memory_order_relaxed);
+}
+
+static uint32_t ready_epoch(void)
+{
+    return atomic_load_explicit(&ready_fall_epoch, memory_order_relaxed);
+}
+
+static bool ready_high(void)
+{
+    return gpio_get_level(CERBERUS_ONBOARD_C5_READY_GPIO) != 0;
+}
+
+static const c5_ready_wait_io_t ready_io = {
+    .now_us = transport_now_us,
+    .pause_us = esp_rom_delay_us,
+    .level_high = ready_high,
+    .fall_epoch = ready_epoch,
+};
 
 static void spi_transaction(const void *tx_data, void *rx_data, size_t length)
 {
@@ -39,20 +134,25 @@ static void spi_transaction(const void *tx_data, void *rx_data, size_t length)
     };
     esp_err_t err = spi_device_polling_transmit(c5_spi, &transaction);
     if (err != ESP_OK) {
+        diagnostic_increment(&transport_diagnostics.spi_errors);
         ESP_LOGW(TAG, "hardware SPI transaction failed: %s", esp_err_to_name(err));
         if (rx_data != NULL) memset(rx_data, 0, length);
     }
 }
 
-static bool wait_for_ready_level(bool high)
+static bool wait_for_ready_cycle(uint32_t baseline)
 {
-    for (uint32_t elapsed = 0; elapsed < C5_READY_TIMEOUT_US; elapsed += C5_READY_POLL_US) {
-        if (gpio_get_level(CERBERUS_ONBOARD_C5_READY_GPIO) == (high ? 1 : 0)) {
-            return true;
-        }
-        esp_rom_delay_us(C5_READY_POLL_US);
+    if (!c5_ready_wait_fall(&ready_io, baseline,
+            C5_READY_TIMEOUT_US, C5_READY_POLL_US)) {
+        diagnostic_increment(&transport_diagnostics.ready_fall_timeouts);
+        return false;
     }
-    return false;
+    if (ready_high()) diagnostic_increment(&transport_diagnostics.ready_latched_pulses);
+    if (!c5_ready_wait_high(&ready_io, C5_READY_TIMEOUT_US, C5_READY_POLL_US)) {
+        diagnostic_increment(&transport_diagnostics.ready_high_timeouts);
+        return false;
+    }
+    return true;
 }
 
 static void spi_request_response_sized(
@@ -62,26 +162,31 @@ static void spi_request_response_sized(
     size_t request_length,
     size_t response_length)
 {
-    bool request_ready = wait_for_ready_level(true);
+    uint32_t started = transport_now_us();
+    diagnostic_increment(&transport_diagnostics.exchanges);
+    bool request_ready = c5_ready_wait_high(&ready_io,
+        C5_READY_TIMEOUT_US, C5_READY_POLL_US);
+    if (!request_ready) diagnostic_increment(&transport_diagnostics.ready_initial_timeouts);
+    uint32_t request_epoch = ready_epoch();
     spi_transaction(request, discarded, request_length);
 
-    bool response_ready = false;
-    if (request_ready && wait_for_ready_level(false)) {
-        response_ready = wait_for_ready_level(true);
-    }
+    bool response_ready = request_ready && wait_for_ready_cycle(request_epoch);
     if (!response_ready) {
         /* Retains V1 compatibility with C5 firmware that predates READY. */
+        diagnostic_increment(&transport_diagnostics.legacy_fallbacks);
         esp_rom_delay_us(C5_LEGACY_RESPONSE_DELAY_US);
     }
+    uint32_t response_epoch = ready_epoch();
     spi_transaction(NULL, response, response_length);
 
     if (response_ready) {
         /* Do not expose the response transaction's stale READY-high level to
            the next command. Wait until the C5 consumes this transfer and
            queues the following transaction. */
-        (void)wait_for_ready_level(false);
-        (void)wait_for_ready_level(true);
+        (void)wait_for_ready_cycle(response_epoch);
     }
+    diagnostic_maximum(&transport_diagnostics.max_exchange_us,
+        transport_now_us() - started);
 }
 
 static void spi_request_response(
@@ -95,31 +200,13 @@ static void spi_request_response(
 
 esp_err_t c5_spi_link_init(void)
 {
+    if (link_mutex != NULL) return ESP_OK;
     if (!cerberus_protocol_self_test()) {
         return ESP_FAIL;
     }
 
-    spi_bus_config_t bus = {
-        .mosi_io_num = CERBERUS_ONBOARD_C5_SPI_MOSI_GPIO,
-        .miso_io_num = CERBERUS_ONBOARD_C5_SPI_MISO_GPIO,
-        .sclk_io_num = CERBERUS_ONBOARD_C5_SPI_SCLK_GPIO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = CERBERUS_SPI_EVENT_BATCH_TRANSFER_SIZE,
-    };
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(C5_SPI_HOST, &bus, SPI_DMA_DISABLED),
-        TAG, "SPI3 bus setup failed");
-    spi_device_interface_config_t device = {
-        .clock_speed_hz = C5_SPI_CLOCK_HZ,
-        .mode = 0,
-        .spics_io_num = CERBERUS_ONBOARD_C5_SPI_CS_GPIO,
-        .queue_size = 1,
-    };
-    esp_err_t err = spi_bus_add_device(C5_SPI_HOST, &device, &c5_spi);
-    if (err != ESP_OK) {
-        (void)spi_bus_free(C5_SPI_HOST);
-        return err;
-    }
+    ESP_RETURN_ON_ERROR(radio_bus_init(), TAG, "shared SPI3 setup failed");
+    c5_spi = radio_bus_onboard();
     int actual_clock_khz = 0;
     if (spi_device_get_actual_freq(c5_spi, &actual_clock_khz) == ESP_OK && actual_clock_khz > 0) {
         c5_spi_actual_clock_hz = (uint32_t)actual_clock_khz * 1000U;
@@ -137,13 +224,25 @@ esp_err_t c5_spi_link_init(void)
     };
     ESP_RETURN_ON_ERROR(gpio_config(&ready_input), "c5_spi", "READY setup failed");
 
-    link_mutex = xSemaphoreCreateMutex();
-    if (link_mutex == NULL) {
-        (void)spi_bus_remove_device(c5_spi);
-        c5_spi = NULL;
-        (void)spi_bus_free(C5_SPI_HOST);
-        return ESP_ERR_NO_MEM;
+    /* ESP_ERR_INVALID_STATE means an existing per-pin ISR service is shared.
+     * Never uninstall it: another driver may own handlers. The READY handler
+     * is IRAM-safe whether that service was allocated with IRAM flags or not. */
+    esp_err_t isr_error = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    if (isr_error != ESP_OK && isr_error != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "READY ISR service failed: %s", esp_err_to_name(isr_error));
+        return isr_error;
     }
+    ESP_RETURN_ON_ERROR(gpio_set_intr_type(CERBERUS_ONBOARD_C5_READY_GPIO,
+        GPIO_INTR_NEGEDGE), TAG, "READY interrupt mode failed");
+    isr_error = gpio_isr_handler_add(CERBERUS_ONBOARD_C5_READY_GPIO,
+        ready_falling_isr, NULL);
+    if (isr_error != ESP_OK) {
+        (void)gpio_intr_disable(CERBERUS_ONBOARD_C5_READY_GPIO);
+        ESP_LOGE(TAG, "READY ISR handler failed: %s", esp_err_to_name(isr_error));
+        return isr_error;
+    }
+
+    link_mutex = radio_bus_mutex();
     ESP_LOGI(TAG, "C5 hardware SPI3 master ready at %lu Hz",
         (unsigned long)c5_spi_actual_clock_hz);
     return ESP_OK;
@@ -259,7 +358,7 @@ esp_err_t c5_spi_link_get_event_queue_status(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -270,7 +369,7 @@ esp_err_t c5_spi_link_get_event_queue_status(
         0U,
         status,
         sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -282,7 +381,7 @@ esp_err_t c5_spi_link_pop_event(cerberus_c5_event_payload_t *event)
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -293,7 +392,7 @@ esp_err_t c5_spi_link_pop_event(cerberus_c5_event_payload_t *event)
         0U,
         event,
         sizeof(*event));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -308,7 +407,7 @@ esp_err_t c5_spi_link_pop_event_batch(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -323,7 +422,7 @@ esp_err_t c5_spi_link_pop_event_batch(
             request_sequence,
             &query,
             sizeof(query))) {
-        xSemaphoreGive(link_mutex);
+        give_link_mutex();
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -353,7 +452,7 @@ esp_err_t c5_spi_link_pop_event_batch(
             gpio_get_level(CERBERUS_ONBOARD_C5_READY_GPIO));
     }
 
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return result;
 }
 
@@ -370,7 +469,7 @@ esp_err_t c5_spi_link_configure_event_flow_control(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -386,7 +485,7 @@ esp_err_t c5_spi_link_configure_event_flow_control(
         sizeof(request),
         status,
         sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -406,7 +505,7 @@ esp_err_t c5_spi_link_read_fragmented_object(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -421,14 +520,14 @@ esp_err_t c5_spi_link_read_fragmented_object(
         &info,
         sizeof(info));
     if (err != ESP_OK) {
-        xSemaphoreGive(link_mutex);
+        give_link_mutex();
         return err;
     }
     if (info.object_type != object_type || info.generation == 0U ||
         info.total_length == 0U || info.total_length > capacity ||
         info.total_length > CERBERUS_FRAGMENT_OBJECT_MAX_SIZE ||
         info.fragment_size != CERBERUS_FRAGMENT_DATA_SIZE || info.flags != 0U) {
-        xSemaphoreGive(link_mutex);
+        give_link_mutex();
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -478,7 +577,7 @@ esp_err_t c5_spi_link_read_fragmented_object(
             *crc32 = info.crc32;
         }
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -523,7 +622,7 @@ esp_err_t c5_spi_link_get_status(cerberus_c5_status_t *status)
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -535,7 +634,8 @@ esp_err_t c5_spi_link_get_status(cerberus_c5_status_t *status)
     if (err != ESP_OK) {
         err = get_status_v1_locked(++sequence, status);
     }
-    xSemaphoreGive(link_mutex);
+    peer_firmware_version = err == ESP_OK ? status->firmware_version : 0U;
+    give_link_mutex();
     return err;
 }
 
@@ -549,13 +649,13 @@ static esp_err_t wifi_scan_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
     memset(status, 0, sizeof(*status));
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -577,11 +677,11 @@ esp_err_t c5_spi_link_get_wifi_scan_status(cerberus_wifi_scan_status_payload_t *
 esp_err_t c5_spi_link_get_wifi_radio_stats(cerberus_wifi_radio_stats_payload_t *stats)
 {
     if (stats == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     memset(stats, 0, sizeof(*stats));
     esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_RADIO_STATS,
         NULL, 0U, stats, sizeof(*stats));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     if (err == ESP_OK && (stats->analyzed_count > CERBERUS_WIFI_SCAN_MAX_RESULTS ||
         stats->open_count + stats->secured_count > stats->analyzed_count ||
         stats->hidden_count > stats->analyzed_count || stats->truncated > 1U)) {
@@ -590,15 +690,350 @@ esp_err_t c5_spi_link_get_wifi_radio_stats(cerberus_wifi_radio_stats_payload_t *
     return err;
 }
 
+static esp_err_t wifi_channel_survey_status_command(cerberus_spi_command_t command,
+    const void *request, size_t request_length,
+    cerberus_wifi_channel_survey_status_payload_t *status)
+{
+    if (!status) return ESP_ERR_INVALID_ARG;
+    memset(status, 0, sizeof(*status));
+    if (!link_mutex) return ESP_ERR_INVALID_STATE;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    esp_err_t err = exchange_v2_locked(command, request, request_length,
+        status, sizeof(*status));
+    give_link_mutex();
+    if (err == ESP_OK &&
+        (status->state > CERBERUS_WIFI_CHANNEL_SURVEY_ERROR ||
+         status->band > CERBERUS_WIFI_CHANNEL_SURVEY_BAND_5 ||
+         status->result_count > CERBERUS_WIFI_CHANNEL_SURVEY_MAX_RESULTS ||
+         status->completed_count > status->result_count ||
+         status->dwell_ms != CERBERUS_WIFI_CHANNEL_SURVEY_DWELL_MS))
+        err = ESP_ERR_INVALID_RESPONSE;
+    if (err != ESP_OK) memset(status, 0, sizeof(*status));
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_channel_survey_start(uint8_t band,
+    cerberus_wifi_channel_survey_status_payload_t *status)
+{
+    if (band != CERBERUS_WIFI_CHANNEL_SURVEY_BAND_24 &&
+        band != CERBERUS_WIFI_CHANNEL_SURVEY_BAND_5) return ESP_ERR_INVALID_ARG;
+    cerberus_c5_status_t device;
+    esp_err_t err = c5_spi_link_get_status(&device);
+    if (err != ESP_OK) return err;
+    if (device.firmware_version < CERBERUS_WIFI_CHANNEL_SURVEY_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    cerberus_wifi_channel_survey_start_request_t request = {.band = band};
+    err = wifi_channel_survey_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_START,
+        &request, sizeof(request), status);
+    if (err == ESP_OK && status->state != CERBERUS_WIFI_CHANNEL_SURVEY_RUNNING)
+        err = status->error_code ? status->error_code : ESP_ERR_INVALID_RESPONSE;
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_channel_survey_stop(
+    cerberus_wifi_channel_survey_status_payload_t *status)
+{
+    esp_err_t err = wifi_channel_survey_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_STOP, NULL, 0U, status);
+    if (err == ESP_OK && status->state == CERBERUS_WIFI_CHANNEL_SURVEY_ERROR)
+        err = status->error_code ? status->error_code : ESP_ERR_INVALID_RESPONSE;
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_channel_survey_status(
+    cerberus_wifi_channel_survey_status_payload_t *status)
+{
+    return wifi_channel_survey_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_STATUS, NULL, 0U, status);
+}
+
+esp_err_t c5_spi_link_wifi_channel_survey_result(uint8_t generation, uint8_t index,
+    cerberus_wifi_channel_survey_result_payload_t *result)
+{
+    if (!result || index >= CERBERUS_WIFI_CHANNEL_SURVEY_MAX_RESULTS)
+        return ESP_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    if (!link_mutex) return ESP_ERR_INVALID_STATE;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    cerberus_wifi_channel_survey_result_request_t request = {
+        .generation = generation, .index = index};
+    esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_RESULT,
+        &request, sizeof(request), result, sizeof(*result));
+    give_link_mutex();
+    if (err == ESP_OK &&
+        (result->generation != generation || result->index != index ||
+         result->seen > 1U || result->channel == 0U || result->dwell_ms !=
+             CERBERUS_WIFI_CHANNEL_SURVEY_DWELL_MS))
+        err = ESP_ERR_INVALID_RESPONSE;
+    if (err != ESP_OK) memset(result, 0, sizeof(*result));
+    return err;
+}
+
+static esp_err_t wifi_packet_monitor_status_command(cerberus_spi_command_t command,
+    const void *request, size_t request_length,
+    cerberus_wifi_packet_monitor_status_payload_t *status)
+{
+    if (!status || !link_mutex) return ESP_ERR_INVALID_ARG;
+    memset(status, 0, sizeof(*status));
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    esp_err_t error = exchange_v2_locked(command, request, request_length,
+        status, sizeof(*status));
+    give_link_mutex();
+    if (error == ESP_OK &&
+        (status->state > CERBERUS_WIFI_PACKET_MONITOR_ERROR ||
+         status->stored_count > CERBERUS_WIFI_PACKET_MONITOR_SAMPLES ||
+         status->sample_ms != CERBERUS_WIFI_PACKET_MONITOR_SAMPLE_MS ||
+         (status->generation != 0U && status->channel == 0U)))
+        error = ESP_ERR_INVALID_RESPONSE;
+    if (error != ESP_OK) memset(status, 0, sizeof(*status));
+    return error;
+}
+
+esp_err_t c5_spi_link_wifi_packet_monitor_start(uint8_t channel,
+    cerberus_wifi_packet_monitor_status_payload_t *status)
+{
+    if (channel == 0U) return ESP_ERR_INVALID_ARG;
+    cerberus_c5_status_t device = {0};
+    esp_err_t error = c5_spi_link_get_status(&device);
+    if (error != ESP_OK) return error;
+    if (device.firmware_version < CERBERUS_WIFI_PACKET_MONITOR_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    cerberus_wifi_packet_monitor_start_request_t request = {.channel = channel};
+    error = wifi_packet_monitor_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_START,
+        &request, sizeof(request), status);
+    if (error == ESP_OK && status->state != CERBERUS_WIFI_PACKET_MONITOR_RUNNING)
+        error = status->error_code != ESP_OK ? (esp_err_t)status->error_code :
+            ESP_ERR_INVALID_RESPONSE;
+    return error;
+}
+
+esp_err_t c5_spi_link_wifi_packet_monitor_stop(uint8_t generation,
+    cerberus_wifi_packet_monitor_status_payload_t *status)
+{
+    if (generation == 0U) return ESP_ERR_INVALID_ARG;
+    cerberus_wifi_packet_monitor_stop_request_t request = {
+        .generation = generation,
+    };
+    esp_err_t error = wifi_packet_monitor_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_STOP,
+        &request, sizeof(request), status);
+    if (error == ESP_OK && status->state == CERBERUS_WIFI_PACKET_MONITOR_ERROR)
+        error = status->error_code != ESP_OK ? (esp_err_t)status->error_code :
+            ESP_ERR_INVALID_RESPONSE;
+    return error;
+}
+
+esp_err_t c5_spi_link_wifi_packet_monitor_status(
+    cerberus_wifi_packet_monitor_status_payload_t *status)
+{
+    return wifi_packet_monitor_status_command(
+        CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_STATUS,
+        NULL, 0U, status);
+}
+
+esp_err_t c5_spi_link_wifi_packet_monitor_sample(uint8_t generation,
+    uint16_t sequence, cerberus_wifi_packet_monitor_sample_payload_t *sample)
+{
+    if (!sample || !link_mutex || generation == 0U) return ESP_ERR_INVALID_ARG;
+    cerberus_wifi_packet_monitor_sample_request_t request = {
+        .generation = generation,
+        .sequence = sequence,
+    };
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    esp_err_t error = exchange_v2_locked(
+        CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_SAMPLE,
+        &request, sizeof(request), sample, sizeof(*sample));
+    give_link_mutex();
+    if (error == ESP_OK && (sample->generation != generation ||
+        sample->sequence != sequence || sample->channel == 0U))
+        error = ESP_ERR_INVALID_RESPONSE;
+    if (error != ESP_OK) memset(sample, 0, sizeof(*sample));
+    return error;
+}
+
+static bool wifi_capture_status_channel_valid(const cerberus_wifi_capture_status_payload_t *status)
+{
+    if (!status->channel)
+        return status->state != CERBERUS_WIFI_CAPTURE_RUNNING ||
+            status->mode_mask == CERBERUS_WIFI_CAPTURE_MODE_BEACON;
+    if (status->mode_mask == CERBERUS_WIFI_CAPTURE_MODE_BEACON)
+        return cerberus_wifi_packet_monitor_channel_valid(status->channel);
+    /* Preserve the existing fixed-channel request range for legacy modes. */
+    return status->channel <= 14U || (status->channel >= 32U && status->channel <= 177U);
+}
+
+static esp_err_t wifi_capture_status_command(cerberus_spi_command_t command,
+    const void *request,size_t request_length,
+    cerberus_wifi_capture_status_payload_t *status)
+{
+    if(!status)return ESP_ERR_INVALID_ARG;
+    memset(status,0,sizeof(*status));
+    if(!link_mutex)return ESP_ERR_INVALID_STATE;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    esp_err_t err=exchange_v2_locked(command,request,request_length,status,sizeof(*status));
+    give_link_mutex();
+    if(err==ESP_OK&&(status->state>CERBERUS_WIFI_CAPTURE_ERROR||
+       status->pending>2U||
+       (status->mode_mask&~CERBERUS_WIFI_CAPTURE_MODE_ALL)!=0U||
+       (status->state==CERBERUS_WIFI_CAPTURE_RUNNING&&!status->mode_mask)||
+       !wifi_capture_status_channel_valid(status)))
+        err=ESP_ERR_INVALID_RESPONSE;
+    if(err!=ESP_OK)memset(status,0,sizeof(*status));
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_capture_start(
+    const cerberus_wifi_capture_start_request_t *request,
+    cerberus_wifi_capture_status_payload_t *status)
+{
+    if(!request||!status)return ESP_ERR_INVALID_ARG;
+    memset(status,0,sizeof(*status));
+    bool hopping=(request->flags&CERBERUS_WIFI_CAPTURE_FLAG_HOP)!=0U;
+    if(hopping&&(request->channel!=0U||request->mode_mask!=CERBERUS_WIFI_CAPTURE_MODE_BEACON||
+       (request->flags&CERBERUS_WIFI_CAPTURE_FLAG_BSSID)!=0U))return ESP_ERR_INVALID_ARG;
+    cerberus_c5_status_t device;
+    esp_err_t err=c5_spi_link_get_status(&device);
+    if(err!=ESP_OK)return err;
+    if(device.firmware_version<CERBERUS_WIFI_CAPTURE_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    if((request->mode_mask&CERBERUS_WIFI_CAPTURE_MODE_SAE_COMMIT)!=0U &&
+       device.firmware_version<CERBERUS_WIFI_CAPTURE_SAE_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    if((request->mode_mask&CERBERUS_WIFI_CAPTURE_MODE_BEACON)!=0U &&
+       device.firmware_version<CERBERUS_WIFI_CAPTURE_BEACON_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    if((request->flags&CERBERUS_WIFI_CAPTURE_FLAG_HOP)!=0U &&
+       device.firmware_version<CERBERUS_WIFI_CAPTURE_HOP_MIN_FIRMWARE)
+        return ESP_ERR_NOT_SUPPORTED;
+    err=wifi_capture_status_command(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_START,
+        request,sizeof(*request),status);
+    if(err!=ESP_OK)return err;
+    if(status->generation!=request->generation||
+       status->state!=CERBERUS_WIFI_CAPTURE_RUNNING||
+       status->mode_mask!=request->mode_mask||
+       (!hopping&&status->channel!=request->channel))
+        return status->error_code?status->error_code:ESP_ERR_INVALID_RESPONSE;
+    return ESP_OK;
+}
+
+esp_err_t c5_spi_link_wifi_capture_status(cerberus_wifi_capture_status_payload_t *status)
+{
+    return wifi_capture_status_command(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_STATUS,
+        NULL,0U,status);
+}
+
+esp_err_t c5_spi_link_wifi_capture_stop(uint32_t generation,
+    cerberus_wifi_capture_status_payload_t *status)
+{
+    if(!status)return ESP_ERR_INVALID_ARG;
+    memset(status,0,sizeof(*status));
+    if(!generation)return ESP_ERR_INVALID_ARG;
+    cerberus_wifi_capture_stop_request_t request={.generation=generation};
+    esp_err_t err=wifi_capture_status_command(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_STOP,
+        &request,sizeof(request),status);
+    if(err==ESP_OK&&status->generation!=generation)
+        err=ESP_ERR_INVALID_RESPONSE;
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_capture_peek(uint32_t generation,
+    cerberus_wifi_capture_peek_payload_t *peek)
+{
+    if(!peek)return ESP_ERR_INVALID_ARG;
+    memset(peek,0,sizeof(*peek));
+    if(!generation)return ESP_ERR_INVALID_ARG;
+    if(!link_mutex)return ESP_ERR_INVALID_STATE;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_capture_stop_request_t request={.generation=generation};
+    esp_err_t err=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_PEEK,
+        &request,sizeof(request),peek,sizeof(*peek));
+    give_link_mutex();
+    if(err==ESP_OK&&(peek->generation!=generation||
+       (peek->sequence==0U&&peek->length!=0U)||
+       (peek->sequence!=0U&&
+        (peek->length==0U||peek->length>4096U||peek->channel==0U||peek->rssi_dbm>0))))
+        err=ESP_ERR_INVALID_RESPONSE;
+    if(err!=ESP_OK)memset(peek,0,sizeof(*peek));
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_capture_read(uint32_t generation,uint32_t sequence,
+    uint16_t offset,cerberus_wifi_capture_read_payload_t *chunk)
+{
+    if(!chunk)return ESP_ERR_INVALID_ARG;
+    memset(chunk,0,sizeof(*chunk));
+    if(!generation||!sequence||offset%CERBERUS_WIFI_CAPTURE_CHUNK_SIZE)
+        return ESP_ERR_INVALID_ARG;
+    if(!link_mutex)return ESP_ERR_INVALID_STATE;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_capture_read_request_t request={
+        .generation=generation,.sequence=sequence,.offset=offset};
+    esp_err_t err=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_READ,
+        &request,sizeof(request),chunk,sizeof(*chunk));
+    give_link_mutex();
+    if(err==ESP_OK&&chunk->offset!=offset)err=ESP_ERR_INVALID_RESPONSE;
+    if(err!=ESP_OK)memset(chunk,0,sizeof(*chunk));
+    return err;
+}
+
+esp_err_t c5_spi_link_wifi_capture_read_frame(
+    const cerberus_wifi_capture_peek_payload_t *peek,uint8_t *frame,size_t capacity)
+{
+    if(!peek||!frame||!peek->generation||!peek->sequence||!peek->length||
+       peek->length>4096U||capacity<peek->length)return ESP_ERR_INVALID_ARG;
+    for(uint16_t offset=0U;offset<peek->length;
+        offset=(uint16_t)(offset+CERBERUS_WIFI_CAPTURE_CHUNK_SIZE)){
+        cerberus_wifi_capture_read_payload_t chunk;
+        esp_err_t err=c5_spi_link_wifi_capture_read(peek->generation,
+            peek->sequence,offset,&chunk);
+        if(err!=ESP_OK){memset(frame,0,peek->length);return err;}
+        size_t remaining=peek->length-offset;
+        size_t count=remaining<CERBERUS_WIFI_CAPTURE_CHUNK_SIZE?
+            remaining:CERBERUS_WIFI_CAPTURE_CHUNK_SIZE;
+        memcpy(frame+offset,chunk.data,count);
+    }
+    if(cerberus_protocol_crc32(frame,peek->length)!=peek->crc32){
+        memset(frame,0,peek->length);return ESP_ERR_INVALID_CRC;
+    }
+    return ESP_OK;
+}
+
+esp_err_t c5_spi_link_wifi_capture_ack(uint32_t generation,uint32_t sequence)
+{
+    if(!generation||!sequence)return ESP_ERR_INVALID_ARG;
+    if(!link_mutex)return ESP_ERR_INVALID_STATE;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_capture_ack_request_t request={
+        .generation=generation,.sequence=sequence};
+    int32_t response=ESP_ERR_INVALID_RESPONSE;
+    esp_err_t err=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_ACK,
+        &request,sizeof(request),&response,sizeof(response));
+    give_link_mutex();
+    return err==ESP_OK?(esp_err_t)response:err;
+}
+
+uint64_t c5_spi_link_wifi_capture_monotonic_us(
+    const cerberus_wifi_capture_peek_payload_t *peek)
+{
+    if(!peek)return 0U;
+    uint64_t value=0U;
+    for(unsigned i=0;i<6U;++i)value|=(uint64_t)peek->monotonic_us_le48[i]<<(8U*i);
+    return value;
+}
+
 static esp_err_t wifi_defense_status_command(
     cerberus_spi_command_t command,
     cerberus_wifi_defense_status_payload_t *status)
 {
     if (status == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     memset(status, 0, sizeof(*status));
     esp_err_t err = exchange_v2_locked(command, NULL, 0U, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     if (err == ESP_OK && (status->state > CERBERUS_WIFI_DEFENSE_ERROR ||
         status->result_count > CERBERUS_WIFI_SCAN_MAX_RESULTS ||
         status->completed_count > status->result_count ||
@@ -629,7 +1064,7 @@ esp_err_t c5_spi_link_get_wifi_defense_result(
     cerberus_wifi_defense_result_payload_t *result)
 {
     if (result == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     memset(result, 0, sizeof(*result));
     cerberus_wifi_defense_result_request_t request = {
         .generation = generation,
@@ -637,7 +1072,7 @@ esp_err_t c5_spi_link_get_wifi_defense_result(
     };
     esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_DEFENSE_RESULT,
         &request, sizeof(request), result, sizeof(*result));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     if (err == ESP_OK && (result->generation != generation || result->index != index ||
         result->channel == 0U || (result->assessment_flags & 0xF0U) != 0U)) {
         return ESP_ERR_INVALID_RESPONSE;
@@ -645,18 +1080,20 @@ esp_err_t c5_spi_link_get_wifi_defense_result(
     return err;
 }
 
-esp_err_t c5_spi_link_get_wifi_scan_result(
+esp_err_t c5_spi_link_get_wifi_scan_observed_result(
     uint8_t generation,
     uint8_t index,
-    cerberus_c5_wifi_result_t *result)
+    cerberus_c5_wifi_result_t *result,
+    cerberus_s3_wifi_observation_t *observation)
 {
+    if (observation) memset(observation, 0, sizeof(*observation));
     if (result == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -666,6 +1103,7 @@ esp_err_t c5_spi_link_get_wifi_scan_result(
         .index = index,
     };
     cerberus_wifi_scan_result_payload_t metadata;
+    uint64_t request_started_us = observation ? (uint64_t)esp_timer_get_time() : 0U;
     esp_err_t err = exchange_v2_locked(
         CERBERUS_SPI_COMMAND_WIFI_SCAN_RESULT,
         &result_request,
@@ -675,8 +1113,15 @@ esp_err_t c5_spi_link_get_wifi_scan_result(
     if (err != ESP_OK || metadata.generation != generation || metadata.index != index ||
         metadata.ssid_length > CERBERUS_WIFI_SSID_MAX_LENGTH ||
         metadata.security > CERBERUS_WIFI_SECURITY_OTHER) {
-        xSemaphoreGive(link_mutex);
+        give_link_mutex();
         return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
+    }
+
+    cerberus_s3_wifi_observation_t pending_observation = {0};
+    if (observation && !cerberus_s3_wifi_observation_decode(&metadata,
+            peer_firmware_version, request_started_us, &pending_observation)) {
+        give_link_mutex();
+        return ESP_ERR_INVALID_RESPONSE;
     }
 
     result->rssi = metadata.rssi;
@@ -689,6 +1134,9 @@ esp_err_t c5_spi_link_get_wifi_scan_result(
         (metadata.ssid_length + CERBERUS_WIFI_SSID_CHUNK_SIZE - 1U) /
         CERBERUS_WIFI_SSID_CHUNK_SIZE);
     for (uint8_t chunk = 0; chunk < chunk_count; ++chunk) {
+        size_t remaining = metadata.ssid_length - copied;
+        uint8_t expected_bytes = remaining < CERBERUS_WIFI_SSID_CHUNK_SIZE ?
+            (uint8_t)remaining : CERBERUS_WIFI_SSID_CHUNK_SIZE;
         cerberus_wifi_scan_ssid_request_t ssid_request = {
             .generation = generation,
             .index = index,
@@ -703,9 +1151,9 @@ esp_err_t c5_spi_link_get_wifi_scan_result(
             sizeof(ssid_payload));
         if (err != ESP_OK || ssid_payload.generation != generation ||
             ssid_payload.index != index || ssid_payload.chunk != chunk ||
-            ssid_payload.byte_count > CERBERUS_WIFI_SSID_CHUNK_SIZE ||
+            ssid_payload.byte_count != expected_bytes ||
             copied + ssid_payload.byte_count > metadata.ssid_length) {
-            xSemaphoreGive(link_mutex);
+            give_link_mutex();
             return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
         }
         memcpy(result->ssid + copied, ssid_payload.bytes, ssid_payload.byte_count);
@@ -713,8 +1161,15 @@ esp_err_t c5_spi_link_get_wifi_scan_result(
     }
     result->ssid[copied] = '\0';
 
-    xSemaphoreGive(link_mutex);
+    if (copied == metadata.ssid_length && observation) *observation = pending_observation;
+    give_link_mutex();
     return copied == metadata.ssid_length ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+esp_err_t c5_spi_link_get_wifi_scan_result(uint8_t generation, uint8_t index,
+    cerberus_c5_wifi_result_t *result)
+{
+    return c5_spi_link_get_wifi_scan_observed_result(generation, index, result, NULL);
 }
 
 esp_err_t c5_spi_link_get_wifi_scan_metadata(
@@ -728,7 +1183,7 @@ esp_err_t c5_spi_link_get_wifi_scan_metadata(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -755,7 +1210,7 @@ esp_err_t c5_spi_link_get_wifi_scan_metadata(
         result->security = metadata.security;
         memcpy(result->bssid, metadata.bssid, sizeof(result->bssid));
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -768,7 +1223,7 @@ esp_err_t c5_spi_link_connect_wifi(
     if (password == NULL || status == NULL) return ESP_ERR_INVALID_ARG;
     size_t password_length = strnlen(password, CERBERUS_WIFI_PASSWORD_MAX_LENGTH + 1U);
     if (password_length > CERBERUS_WIFI_PASSWORD_MAX_LENGTH || link_mutex == NULL) return ESP_ERR_INVALID_SIZE;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(500)) != pdTRUE) return ESP_ERR_TIMEOUT;
     cerberus_wifi_connect_begin_request_t begin = {
         .generation = generation,
         .index = index,
@@ -805,7 +1260,7 @@ esp_err_t c5_spi_link_connect_wifi(
                 NULL, 0, status, sizeof(*status));
         }
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -814,9 +1269,9 @@ static esp_err_t wifi_connection_status_command(
     cerberus_wifi_connection_status_payload_t *status)
 {
     if (status == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -833,10 +1288,170 @@ esp_err_t c5_spi_link_get_wifi_connection_status(cerberus_wifi_connection_status
 esp_err_t c5_spi_link_get_wifi_dns_status(cerberus_wifi_dns_status_payload_t *status)
 {
     if (status == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_DNS_STATUS,
         NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
+    return err;
+}
+
+static esp_err_t network_scan_command(cerberus_spi_command_t command,
+    const void *request, size_t request_size, cerberus_net_scan_status_t *status)
+{
+    if (!status || !link_mutex) return ESP_ERR_INVALID_ARG;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    cerberus_net_scan_status_t reply;
+    esp_err_t err = exchange_v2_locked(command, request, request_size, &reply, sizeof(reply));
+    give_link_mutex();
+    if (err != ESP_OK) return err;
+    if (reply.state > CERBERUS_NET_SCAN_ERROR || reply.result_count > CERBERUS_NET_SCAN_MAX_RESULTS ||
+        reply.tested > reply.total || (uint32_t)reply.open + reply.closed + reply.filtered != reply.tested ||
+        reply.result_count > reply.open) return ESP_ERR_INVALID_RESPONSE;
+    *status = reply;
+    return command != CERBERUS_SPI_COMMAND_NET_SCAN_STATUS && reply.error_code != ESP_OK ? reply.error_code : ESP_OK;
+}
+esp_err_t c5_spi_link_network_start(const cerberus_net_scan_request_t *request, cerberus_net_scan_status_t *status)
+{
+    if (!request) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = network_scan_command(CERBERUS_SPI_COMMAND_NET_SCAN_START, request, sizeof(*request), status);
+    return err == ESP_OK && status->job_id != request->job_id ? ESP_ERR_INVALID_RESPONSE : err;
+}
+esp_err_t c5_spi_link_network_status(cerberus_net_scan_status_t *status)
+{
+    return network_scan_command(CERBERUS_SPI_COMMAND_NET_SCAN_STATUS, NULL, 0, status);
+}
+esp_err_t c5_spi_link_network_stop(uint16_t job_id, cerberus_net_scan_status_t *status)
+{
+    esp_err_t err = network_scan_command(CERBERUS_SPI_COMMAND_NET_SCAN_STOP, &job_id, sizeof(job_id), status);
+    return err == ESP_OK && status->job_id != job_id ? ESP_ERR_INVALID_RESPONSE : err;
+}
+esp_err_t c5_spi_link_network_result(uint16_t job_id, uint8_t index, cerberus_net_scan_result_t *result)
+{
+    if (!result || !link_mutex || index >= CERBERUS_NET_SCAN_MAX_RESULTS) return ESP_ERR_INVALID_ARG;
+    cerberus_net_scan_query_t query = {.job_id = job_id, .index = index};
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    cerberus_net_scan_result_t reply;
+    esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_NET_SCAN_RESULT, &query, sizeof(query), &reply, sizeof(reply));
+    give_link_mutex();
+    if (err != ESP_OK) return err;
+    if (!cerberus_net_scan_result_valid(&reply, job_id, index)) return ESP_ERR_INVALID_RESPONSE;
+    *result = reply;
+    return ESP_OK;
+}
+
+static esp_err_t radio_test_command(cerberus_spi_command_t command,const void *data,size_t length,
+    cerberus_radio_test_status_t *status)
+{
+    if(!status||!link_mutex)return ESP_ERR_INVALID_ARG;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_radio_test_status_t reply;
+    esp_err_t err=exchange_v2_locked(command,data,length,&reply,sizeof(reply));
+    give_link_mutex();
+    if(err!=ESP_OK)return err;
+    if(reply.state>CERBERUS_TEST_ERROR||reply.mode>CERBERUS_TEST_WIFI_AP||reply.seconds>30||reply.name_length>32)return ESP_ERR_INVALID_RESPONSE;
+    if(reply.mode==CERBERUS_TEST_WIFI_AP&&
+       (reply.name_length>CERBERUS_AP_STAGE_SAE_MATERIAL||reply.counts_valid>1))return ESP_ERR_INVALID_RESPONSE;
+    *status=reply;return ESP_OK;
+}
+
+static esp_err_t station_command(cerberus_spi_command_t command,const void *data,size_t length,
+    cerberus_wifi_station_status_t *status)
+{
+    if(!status||!link_mutex)return ESP_ERR_INVALID_ARG;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_station_status_t reply;
+    esp_err_t error=exchange_v2_locked(command,data,length,&reply,sizeof(reply));
+    give_link_mutex();
+    if(error!=ESP_OK)return error;
+    if(reply.state>CERBERUS_STATION_ERROR||reply.count>CERBERUS_WIFI_STATION_LIMIT||
+        reply.matched_frames>reply.observed_frames||reply.overflow_frames>reply.matched_frames||
+        reply.count>reply.matched_frames)return ESP_ERR_INVALID_RESPONSE;
+    *status=reply;
+    return command!=CERBERUS_SPI_COMMAND_WIFI_STATION_STATUS&&reply.error_code?reply.error_code:ESP_OK;
+}
+esp_err_t c5_spi_link_station_start(const cerberus_wifi_station_request_t *request,cerberus_wifi_station_status_t *status)
+{
+    if(!cerberus_wifi_station_request_valid(request))return ESP_ERR_INVALID_ARG;
+    esp_err_t error=station_command(CERBERUS_SPI_COMMAND_WIFI_STATION_START,request,sizeof(*request),status);
+    return error==ESP_OK&&status->job_id!=request->job_id?ESP_ERR_INVALID_RESPONSE:error;
+}
+esp_err_t c5_spi_link_station_status(uint16_t id,cerberus_wifi_station_status_t *status)
+{return station_command(CERBERUS_SPI_COMMAND_WIFI_STATION_STATUS,&id,sizeof(id),status);}
+esp_err_t c5_spi_link_station_stop(uint16_t id,cerberus_wifi_station_status_t *status)
+{
+    esp_err_t error=station_command(CERBERUS_SPI_COMMAND_WIFI_STATION_STOP,&id,sizeof(id),status);
+    return error==ESP_OK&&status->job_id!=id?ESP_ERR_INVALID_RESPONSE:error;
+}
+esp_err_t c5_spi_link_station_result(uint16_t id,uint8_t index,cerberus_wifi_station_result_t *result)
+{
+    if(!result||!link_mutex||!id||index>=CERBERUS_WIFI_STATION_LIMIT)return ESP_ERR_INVALID_ARG;
+    cerberus_wifi_station_query_t query={.job_id=id,.index=index};
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_station_result_t reply;
+    esp_err_t error=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_STATION_RESULT,&query,sizeof(query),&reply,sizeof(reply));
+    give_link_mutex();
+    if(error!=ESP_OK)return error;
+    if(!cerberus_wifi_station_result_valid(&reply,id,index))return ESP_ERR_INVALID_RESPONSE;
+    *result=reply;return ESP_OK;
+}
+esp_err_t c5_spi_link_test_status(uint16_t id,cerberus_radio_test_status_t *status)
+{return radio_test_command(CERBERUS_SPI_COMMAND_RADIO_TEST_STATUS,&id,sizeof(id),status);}
+esp_err_t c5_spi_link_ap_start(const cerberus_wifi_ap_job_t *r,cerberus_radio_test_status_t *status)
+{
+    if(!cerberus_wifi_ap_job_valid(r))return ESP_ERR_INVALID_ARG;
+    esp_err_t error=radio_test_command(CERBERUS_SPI_COMMAND_WIFI_AP_START,r,sizeof(*r),status);
+    if(error==ESP_OK&&(status->job_id!=r->job_id||status->mode!=CERBERUS_TEST_WIFI_AP))return ESP_ERR_INVALID_RESPONSE;
+    return error==ESP_OK&&status->error_code!=ESP_OK?status->error_code:error;
+}
+esp_err_t c5_spi_link_ap_validate(const cerberus_wifi_ap_job_t *r)
+{
+    if(!cerberus_wifi_ap_job_valid(r)||!link_mutex)return ESP_ERR_INVALID_ARG;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    int32_t reply=ESP_FAIL;
+    esp_err_t error=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_AP_VALIDATE,r,sizeof(*r),&reply,sizeof(reply));
+    give_link_mutex();return error==ESP_OK?reply:error;
+}
+esp_err_t c5_spi_link_ap_stage(const cerberus_wifi_ap_job_t *r,
+    const cerberus_wifi_ap_station_set_t *stations)
+{
+    if(!cerberus_wifi_ap_station_set_valid(r,stations)||!link_mutex)return ESP_ERR_INVALID_ARG;
+    if(take_link_mutex(pdMS_TO_TICKS(250))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    cerberus_wifi_ap_station_begin_t begin={.job=*r,.count=stations->count};
+    int32_t reply=ESP_FAIL;
+    esp_err_t error=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_AP_STATION_BEGIN,
+        &begin,sizeof(begin),&reply,sizeof(reply));
+    if(error==ESP_OK)error=reply;
+    for(unsigned offset=0;error==ESP_OK&&offset<stations->count;offset+=3){
+        cerberus_wifi_ap_station_chunk_t chunk={.job_id=r->job_id,.offset=(uint8_t)offset,
+            .count=(uint8_t)((stations->count-offset)<3?stations->count-offset:3)};
+        for(unsigned i=0;i<chunk.count;++i)memcpy(chunk.mac[i],stations->mac[offset+i],6);
+        reply=ESP_FAIL;
+        error=exchange_v2_locked(CERBERUS_SPI_COMMAND_WIFI_AP_STATION_CHUNK,
+            &chunk,sizeof(chunk),&reply,sizeof(reply));
+        if(error==ESP_OK)error=reply;
+    }
+    give_link_mutex();return error;
+}
+esp_err_t c5_spi_link_test_stop(uint16_t id,cerberus_radio_test_status_t *status)
+{return radio_test_command(CERBERUS_SPI_COMMAND_RADIO_TEST_STOP,&id,sizeof(id),status);}
+esp_err_t c5_spi_link_test_start(const cerberus_radio_test_config_t *c,cerberus_radio_test_status_t *status)
+{
+    if(!cerberus_radio_test_config_valid(c)||c->mode!=CERBERUS_TEST_WIFI_BEACON)return ESP_ERR_INVALID_ARG;
+    cerberus_radio_test_begin_t begin={.job_id=c->job_id,.mode=c->mode,.channel=c->channel,.seconds=c->seconds,.name_length=c->name_length};
+    memcpy(begin.name,c->name,16);
+    esp_err_t err=radio_test_command(CERBERUS_SPI_COMMAND_RADIO_TEST_BEGIN,&begin,sizeof(begin),status);
+    if(err==ESP_OK&&status->error_code)err=status->error_code;
+    if(err==ESP_OK&&status->job_id!=c->job_id)err=ESP_ERR_INVALID_RESPONSE;
+    if(err==ESP_OK&&c->name_length>16){
+        cerberus_radio_test_chunk_t chunk={.job_id=c->job_id,.offset=16,.length=c->name_length-16};
+        memcpy(chunk.data,c->name+16,chunk.length);
+        err=radio_test_command(CERBERUS_SPI_COMMAND_RADIO_TEST_CHUNK,&chunk,sizeof(chunk),status);
+        if(err==ESP_OK&&status->error_code)err=status->error_code;
+    }
+    if(err==ESP_OK){
+        err=radio_test_command(CERBERUS_SPI_COMMAND_RADIO_TEST_START,&c->job_id,sizeof(c->job_id),status);
+        if(err==ESP_OK&&status->error_code)err=status->error_code;
+    }
     return err;
 }
 
@@ -844,9 +1459,9 @@ static esp_err_t network_diagnostics_command(cerberus_spi_command_t command,
     cerberus_network_diagnostics_status_payload_t *status)
 {
     if (status == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -866,9 +1481,9 @@ static esp_err_t mdns_status_command(cerberus_spi_command_t command,
     cerberus_mdns_scan_status_payload_t *status)
 {
     if (status == NULL || link_mutex == NULL) return ESP_ERR_INVALID_ARG;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -892,10 +1507,10 @@ esp_err_t c5_spi_link_get_mdns_result(
         .generation = generation,
         .index = index,
     };
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
     esp_err_t err = exchange_v2_locked(CERBERUS_SPI_COMMAND_MDNS_SCAN_RESULT,
         &request, sizeof(request), result, sizeof(*result));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     if (err == ESP_OK && (result->generation != generation || result->index != index)) {
         return ESP_ERR_INVALID_RESPONSE;
     }
@@ -912,13 +1527,13 @@ static esp_err_t ble_scan_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(100)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
     memset(status, 0, sizeof(*status));
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -985,7 +1600,7 @@ esp_err_t c5_spi_link_get_ble_scan_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -1005,7 +1620,7 @@ esp_err_t c5_spi_link_get_ble_scan_result(
         metadata.name_length > CERBERUS_BLE_NAME_MAX_LENGTH ||
         (metadata.uuid_length != 0U && metadata.uuid_length != 2U &&
          metadata.uuid_length != 4U && metadata.uuid_length != 16U)) {
-        xSemaphoreGive(link_mutex);
+        give_link_mutex();
         return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
     }
 
@@ -1023,7 +1638,7 @@ esp_err_t c5_spi_link_get_ble_scan_result(
         err = read_ble_data_locked(
             generation, index, CERBERUS_BLE_DATA_SERVICE_UUID, metadata.uuid_length, result->uuid);
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1035,7 +1650,7 @@ esp_err_t c5_spi_link_get_ble_advertisement(
     if (result == NULL) return ESP_ERR_INVALID_ARG;
     memset(result, 0, sizeof(*result));
     if (link_mutex == NULL) return ESP_ERR_INVALID_STATE;
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) return ESP_ERR_TIMEOUT;
 
     cerberus_c5_status_t status = {0};
     esp_err_t err = get_status_v2_locked(++sequence, &status);
@@ -1068,11 +1683,185 @@ esp_err_t c5_spi_link_get_ble_advertisement(
             observation.length, observation.data);
     }
     if (err == ESP_OK) *result = observation;
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
+
+/* BEGIN PASSIVE WIFI PROBE READER: also compiled by the focused host harness. */
+typedef struct {
+    uint32_t deadline_ms;
+    cerberus_c5_probe_continue_fn continue_fn;
+    void *context;
+} wifi_probe_read_control_t;
+
+static esp_err_t wifi_probe_read_guard(const wifi_probe_read_control_t *control,
+    bool check_continue, uint32_t *remaining_ms)
+{
+    if (check_continue && control->continue_fn && !control->continue_fn(control->context))
+        return ESP_ERR_NOT_FINISHED;
+    int64_t now_us = esp_timer_get_time();
+    if (now_us < 0) return ESP_ERR_INVALID_STATE;
+    uint32_t now_ms = (uint32_t)((uint64_t)now_us / 1000U);
+    uint32_t remaining = control->deadline_ms - now_ms;
+    if (!remaining || remaining > INT32_MAX) return ESP_ERR_TIMEOUT;
+    if (remaining_ms) *remaining_ms = remaining;
+    return ESP_OK;
+}
+
+static bool wifi_probe_peer_equal(const cerberus_c5_status_t *before,
+    const cerberus_c5_status_t *after)
+{
+    return before->firmware_version == after->firmware_version &&
+        before->capabilities == after->capabilities &&
+        before->protocol_version == after->protocol_version &&
+        before->reset_reason == after->reset_reason &&
+        before->boot_count == after->boot_count && after->uptime_ms >= before->uptime_ms;
+}
+
+/* Release after every exchange, including each row chunk, so Stop and other
+ * radio clients can progress. Full bank epochs make interleaving detectable. */
+static esp_err_t wifi_probe_transfer(const wifi_probe_read_control_t *control,
+    bool peer_status, cerberus_spi_command_t command, const void *request,
+    size_t request_size, void *response, size_t response_size)
+{
+    uint32_t remaining = 0U;
+    esp_err_t err = wifi_probe_read_guard(control, true, &remaining);
+    if (err != ESP_OK) return err;
+    if (remaining > 100U) remaining = 100U;
+    if (take_link_mutex(pdMS_TO_TICKS(remaining)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    err = wifi_probe_read_guard(control, false, NULL);
+    if (err == ESP_OK) {
+        err = peer_status ? get_status_v2_locked(++sequence, response) :
+            exchange_v2_locked(command, request, request_size, response, response_size);
+    }
+    give_link_mutex();
+    if (err == ESP_OK) err = wifi_probe_read_guard(control, true, NULL);
+    return err;
+}
+
+static esp_err_t wifi_probe_bank_read(uint8_t generation,
+    const wifi_probe_read_control_t *control, cerberus_c5_wifi_probe_bank_t *proof)
+{
+    cerberus_c5_wifi_probe_bank_t pending = {0};
+    cerberus_c5_status_t before = {0};
+    esp_err_t err = wifi_probe_transfer(control, true, CERBERUS_SPI_COMMAND_STATUS,
+        NULL, 0U, &before, sizeof(before));
+    if (err == ESP_OK && before.firmware_version < CERBERUS_WIFI_PROBE_MIN_FIRMWARE)
+        err = ESP_ERR_NOT_SUPPORTED;
+    if (err == ESP_OK && before.protocol_version != CERBERUS_PROTOCOL_VERSION)
+        err = ESP_ERR_INVALID_RESPONSE;
+    if (err == ESP_OK && !(before.capabilities &
+        (CERBERUS_C5_CAP_WIFI_2_4_GHZ | CERBERUS_C5_CAP_WIFI_5_GHZ)))
+        err = ESP_ERR_INVALID_RESPONSE;
+    cerberus_wifi_probe_status_query_t query = {generation};
+    if (err == ESP_OK) err = wifi_probe_transfer(control, false,
+        CERBERUS_SPI_COMMAND_WIFI_PROBE_STATUS, &query, sizeof(query),
+        &pending.status, sizeof(pending.status));
+    if (err == ESP_OK && (!cerberus_wifi_probe_status_valid(&pending.status) ||
+        pending.status.generation != generation || pending.status.state != CERBERUS_WIFI_PROBE_COMPLETE))
+        err = ESP_ERR_INVALID_RESPONSE;
+    if (err == ESP_OK) err = wifi_probe_transfer(control, true, CERBERUS_SPI_COMMAND_STATUS,
+        NULL, 0U, &pending.peer, sizeof(pending.peer));
+    if (err == ESP_OK && !wifi_probe_peer_equal(&before, &pending.peer))
+        err = ESP_ERR_INVALID_RESPONSE;
+    if (err == ESP_OK) *proof = pending;
+    return err;
+}
+
+static esp_err_t wifi_probe_bank_check(const cerberus_c5_wifi_probe_bank_t *proof,
+    const wifi_probe_read_control_t *control)
+{
+    cerberus_c5_wifi_probe_bank_t current = {0};
+    esp_err_t err = wifi_probe_bank_read(proof->status.generation, control, &current);
+    /* A supported proof becoming an older peer is a failed identity fence,
+     * never permission for the caller to fall back to a legacy AP-only bank. */
+    if (err == ESP_ERR_NOT_SUPPORTED) err = ESP_ERR_INVALID_RESPONSE;
+    if (err == ESP_OK && (memcmp(&proof->status, &current.status, sizeof(proof->status)) ||
+        !wifi_probe_peer_equal(&proof->peer, &current.peer))) err = ESP_ERR_INVALID_RESPONSE;
+    return err;
+}
+
+esp_err_t c5_spi_link_get_wifi_probe_bank(uint8_t generation,
+    uint32_t deadline_ms, cerberus_c5_wifi_probe_bank_t *proof)
+{
+    if (!proof) return ESP_ERR_INVALID_ARG;
+    memset(proof, 0, sizeof(*proof));
+    if (!link_mutex) return ESP_ERR_INVALID_STATE;
+    const wifi_probe_read_control_t control = {.deadline_ms = deadline_ms};
+    return wifi_probe_bank_read(generation, &control, proof);
+}
+
+esp_err_t c5_spi_link_check_wifi_probe_bank(const cerberus_c5_wifi_probe_bank_t *proof,
+    uint32_t deadline_ms)
+{
+    if (!proof || !cerberus_wifi_probe_status_valid(&proof->status) ||
+        proof->status.state != CERBERUS_WIFI_PROBE_COMPLETE ||
+        proof->peer.firmware_version < CERBERUS_WIFI_PROBE_MIN_FIRMWARE ||
+        proof->peer.protocol_version != CERBERUS_PROTOCOL_VERSION) return ESP_ERR_INVALID_ARG;
+    if (!link_mutex) return ESP_ERR_INVALID_STATE;
+    const wifi_probe_read_control_t control = {.deadline_ms = deadline_ms};
+    return wifi_probe_bank_check(proof, &control);
+}
+
+static bool wifi_probe_same_row(const cerberus_wifi_probe_row_t *a,
+    const cerberus_wifi_probe_row_t *b)
+{
+    return !memcmp(a->transmitter, b->transmitter, sizeof(a->transmitter)) &&
+        a->channel == b->channel && a->ssid_length == b->ssid_length &&
+        !memcmp(a->ssid, b->ssid, a->ssid_length);
+}
+
+esp_err_t c5_spi_link_copy_wifi_probe_results(uint8_t generation,
+    uint32_t deadline_ms, cerberus_c5_wifi_probe_bank_t *proof,
+    cerberus_wifi_probe_row_t *rows, size_t capacity,
+    cerberus_c5_probe_continue_fn continue_fn, void *context)
+{
+    size_t clear_count = capacity < CERBERUS_WIFI_PROBE_LIMIT ? capacity : CERBERUS_WIFI_PROBE_LIMIT;
+    if (proof) memset(proof, 0, sizeof(*proof));
+    if (rows) memset(rows, 0, clear_count * sizeof(*rows));
+    if (!proof || capacity > CERBERUS_WIFI_PROBE_LIMIT || (!rows && capacity)) return ESP_ERR_INVALID_ARG;
+    if (!link_mutex) return ESP_ERR_INVALID_STATE;
+    const wifi_probe_read_control_t control = {deadline_ms, continue_fn, context};
+    cerberus_c5_wifi_probe_bank_t pending = {0};
+    esp_err_t err = wifi_probe_bank_read(generation, &control, &pending);
+    if (err == ESP_OK && pending.status.count > capacity) err = ESP_ERR_INVALID_SIZE;
+    uint64_t frames = pending.status.dropped_frames;
+    for (uint8_t index = 0U; err == ESP_OK && index < pending.status.count; ++index) {
+        cerberus_wifi_probe_row_t row = {0};
+        for (uint8_t part = 0U; err == ESP_OK && part < CERBERUS_WIFI_PROBE_CHUNKS; ++part) {
+            cerberus_wifi_probe_query_t query = {pending.status.epoch, generation, index, part};
+            cerberus_wifi_probe_chunk_t chunk = {0};
+            err = wifi_probe_transfer(&control, false, CERBERUS_SPI_COMMAND_WIFI_PROBE_CHUNK,
+                &query, sizeof(query), &chunk, sizeof(chunk));
+            size_t offset = (size_t)part * CERBERUS_WIFI_PROBE_CHUNK_BYTES;
+            size_t length = sizeof(row) - offset;
+            if (length > CERBERUS_WIFI_PROBE_CHUNK_BYTES) length = CERBERUS_WIFI_PROBE_CHUNK_BYTES;
+            if (err == ESP_OK && (chunk.epoch != pending.status.epoch || chunk.generation != generation ||
+                chunk.index != index || chunk.chunk != part || chunk.length != length)) err = ESP_ERR_INVALID_RESPONSE;
+            for (size_t i = length; err == ESP_OK && i < sizeof(chunk.data); ++i)
+                if (chunk.data[i]) err = ESP_ERR_INVALID_RESPONSE;
+            if (err == ESP_OK) memcpy((uint8_t *)&row + offset, chunk.data, length);
+        }
+        if (err == ESP_OK && (!cerberus_wifi_probe_row_valid(&row) ||
+            !(pending.peer.capabilities & (row.channel <= 14U ?
+                CERBERUS_C5_CAP_WIFI_2_4_GHZ : CERBERUS_C5_CAP_WIFI_5_GHZ))))
+            err = ESP_ERR_INVALID_RESPONSE;
+        for (uint8_t i = 0U; err == ESP_OK && i < index; ++i)
+            if (wifi_probe_same_row(&rows[i], &row)) err = ESP_ERR_INVALID_RESPONSE;
+        if (err == ESP_OK) { rows[index] = row; frames += row.frames; }
+    }
+    if (frames > UINT32_MAX) frames = UINT32_MAX;
+    if (err == ESP_OK && frames != pending.status.matched_frames) err = ESP_ERR_INVALID_RESPONSE;
+    if (err == ESP_OK) err = wifi_probe_bank_check(&pending, &control);
+    if (err == ESP_OK) *proof = pending;
+    else if (rows) memset(rows, 0, clear_count * sizeof(*rows));
+    return err;
+}
+/* END PASSIVE WIFI PROBE READER. */
+
 #include "c5_watch_link.h"
+#include "c5_remote_id_link.h"
 
 static esp_err_t ble_connection_command(
     cerberus_spi_command_t command,
@@ -1086,7 +1875,7 @@ static esp_err_t ble_connection_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -1097,7 +1886,7 @@ static esp_err_t ble_connection_command(
         request_length,
         status,
         sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1139,12 +1928,12 @@ static esp_err_t ble_service_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
     esp_err_t err = exchange_v2_locked(command, NULL, 0, status, sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1171,7 +1960,7 @@ esp_err_t c5_spi_link_get_ble_service_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -1197,7 +1986,7 @@ esp_err_t c5_spi_link_get_ble_service_result(
         result->start_handle = payload.start_handle;
         result->end_handle = payload.end_handle;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1213,7 +2002,7 @@ static esp_err_t ble_characteristic_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
@@ -1223,7 +2012,7 @@ static esp_err_t ble_characteristic_status_command(
         request_length,
         status,
         sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1266,7 +2055,7 @@ esp_err_t c5_spi_link_get_ble_characteristic_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -1293,7 +2082,7 @@ esp_err_t c5_spi_link_get_ble_characteristic_result(
         result->value_handle = payload.value_handle;
         result->properties = payload.properties;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1309,7 +2098,7 @@ static esp_err_t ble_read_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
@@ -1319,7 +2108,7 @@ static esp_err_t ble_read_status_command(
         request_length,
         status,
         sizeof(*status));
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1361,7 +2150,7 @@ esp_err_t c5_spi_link_get_ble_characteristic_read_data(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     cerberus_ble_gatt_read_data_request_t request = {
@@ -1379,7 +2168,7 @@ esp_err_t c5_spi_link_get_ble_characteristic_read_data(
         result->data_length == 0U || result->data_length > CERBERUS_BLE_GATT_READ_CHUNK_LENGTH)) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1393,7 +2182,7 @@ static esp_err_t ieee802154_energy_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
@@ -1406,7 +2195,7 @@ static esp_err_t ieee802154_energy_status_command(
               CERBERUS_IEEE802154_CHANNEL_COUNT)))) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1436,7 +2225,7 @@ esp_err_t c5_spi_link_get_ieee802154_energy_scan_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     cerberus_ieee802154_energy_scan_result_request_t request = {
@@ -1454,7 +2243,7 @@ esp_err_t c5_spi_link_get_ieee802154_energy_scan_result(
         result->channel_count != CERBERUS_IEEE802154_CHANNEL_COUNT)) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1468,7 +2257,7 @@ static esp_err_t ieee802154_beacon_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
@@ -1482,7 +2271,7 @@ static esp_err_t ieee802154_beacon_status_command(
               CERBERUS_IEEE802154_CHANNEL_COUNT)))) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1513,7 +2302,7 @@ esp_err_t c5_spi_link_get_ieee802154_beacon_scan_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     cerberus_ieee802154_beacon_scan_result_request_t request = {
@@ -1533,7 +2322,7 @@ esp_err_t c5_spi_link_get_ieee802154_beacon_scan_result(
             CERBERUS_IEEE802154_CHANNEL_COUNT)) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1547,7 +2336,7 @@ static esp_err_t ieee802154_activity_status_command(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     memset(status, 0, sizeof(*status));
@@ -1560,7 +2349,7 @@ static esp_err_t ieee802154_activity_status_command(
               CERBERUS_IEEE802154_CHANNEL_COUNT)))) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
 
@@ -1591,7 +2380,7 @@ esp_err_t c5_spi_link_get_ieee802154_activity_scan_result(
     if (link_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xSemaphoreTake(link_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+    if (take_link_mutex(pdMS_TO_TICKS(250)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     cerberus_ieee802154_activity_scan_result_request_t request = {
@@ -1611,6 +2400,10 @@ esp_err_t c5_spi_link_get_ieee802154_activity_scan_result(
         result->first_channel != expected_first_channel)) {
         err = ESP_ERR_INVALID_RESPONSE;
     }
-    xSemaphoreGive(link_mutex);
+    give_link_mutex();
     return err;
 }
+
+#include "c5_csi_link_impl.h"
+#include "c5_mac_monitor_link_impl.h"
+#include "c5_wifi_relation_link_impl.h"

@@ -6,6 +6,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_msc.h"
@@ -17,6 +18,8 @@
 static const char *TAG = "usb_msc";
 static tinyusb_msc_storage_handle_t storage_handle;
 static sdmmc_card_t *usb_card;
+static bool usb_driver_installed;
+static bool msc_driver_installed;
 static portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 static cerberus_usb_mass_storage_status_t mass_storage_status;
 
@@ -67,12 +70,46 @@ static void usb_event(tinyusb_event_t *event, void *argument)
     }
 }
 
-static void restore_normal_usb(void)
+static esp_err_t restore_normal_usb(void)
 {
-    (void)cerberus_storage_release_usb_card();
-    (void)cerberus_storage_release_from_usb();
-    (void)cerberus_storage_mount();
-    (void)cerberus_usb_console_start();
+    esp_err_t err = ESP_OK;
+    if (usb_driver_installed) {
+        /* Give the host a real detach interval before routing the same pads
+         * to a device with different descriptors (native Serial/JTAG). */
+        (void)tud_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(250));
+        err = tinyusb_driver_uninstall();
+        if (err != ESP_OK) return err;
+        usb_driver_installed = false;
+    }
+    if (storage_handle) {
+        err = tinyusb_msc_delete_storage(storage_handle);
+        if (err == ESP_OK) storage_handle = NULL;
+    }
+    if (err == ESP_OK && msc_driver_installed) {
+        err = tinyusb_msc_uninstall_driver();
+        if (err == ESP_OK) msc_driver_installed = false;
+    }
+    if (err == ESP_OK && cerberus_storage_get_owner() == CERBERUS_STORAGE_OWNER_USB) {
+        err = cerberus_storage_release_usb_card();
+        if (err == ESP_OK) {
+            usb_card = NULL;
+            err = cerberus_storage_release_from_usb();
+        }
+    }
+    if (err == ESP_OK) err = cerberus_storage_mount();
+    /* Remount failure must not strand diagnostics on the disabled OTG PHY. */
+    esp_err_t console_error = cerberus_usb_console_start();
+    if (err == ESP_OK) err = console_error;
+    bool still_owned = usb_driver_installed || msc_driver_installed || storage_handle ||
+        cerberus_storage_get_owner() == CERBERUS_STORAGE_OWNER_USB;
+    portENTER_CRITICAL(&status_lock);
+    mass_storage_status.active = still_owned;
+    mass_storage_status.host_attached = false;
+    mass_storage_status.safe_to_release = true;
+    mass_storage_status.last_error = err;
+    portEXIT_CRITICAL(&status_lock);
+    return err;
 }
 
 esp_err_t cerberus_usb_mass_storage_start(void)
@@ -81,7 +118,7 @@ esp_err_t cerberus_usb_mass_storage_start(void)
     bool already_active = mass_storage_status.active;
     portEXIT_CRITICAL(&status_lock);
     if (already_active) {
-        return ESP_OK;
+        return usb_driver_installed ? ESP_OK : ESP_ERR_INVALID_STATE;
     }
 
     esp_err_t err = cerberus_usb_console_stop();
@@ -107,6 +144,7 @@ esp_err_t cerberus_usb_mass_storage_start(void)
         restore_normal_usb();
         return err;
     }
+    msc_driver_installed = true;
 
     tinyusb_msc_storage_config_t storage_config = {
         .medium.card = usb_card,
@@ -124,26 +162,24 @@ esp_err_t cerberus_usb_mass_storage_start(void)
     };
     err = tinyusb_msc_new_storage_sdmmc(&storage_config, &storage_handle);
     if (err != ESP_OK) {
-        (void)tinyusb_msc_uninstall_driver();
         restore_normal_usb();
         return err;
     }
 
     tinyusb_config_t usb_config = TINYUSB_DEFAULT_CONFIG();
     usb_config.event_cb = usb_event;
+    /* Initialize before TinyUSB starts dispatching host callbacks. Do not
+     * overwrite an attach/mount event after installation returns. */
+    update_state(false, true);
     err = tinyusb_driver_install(&usb_config);
     if (err != ESP_OK) {
-        (void)tinyusb_msc_delete_storage(storage_handle);
-        storage_handle = NULL;
-        (void)tinyusb_msc_uninstall_driver();
         restore_normal_usb();
         return err;
     }
+    usb_driver_installed = true;
 
     portENTER_CRITICAL(&status_lock);
     mass_storage_status.active = true;
-    mass_storage_status.host_attached = false;
-    mass_storage_status.safe_to_release = true;
     mass_storage_status.last_error = ESP_OK;
     portEXIT_CRITICAL(&status_lock);
     ESP_LOGI(TAG, "microSD exposed as exclusive USB mass storage");
@@ -161,36 +197,14 @@ esp_err_t cerberus_usb_mass_storage_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t err = tinyusb_driver_uninstall();
-    if (err == ESP_OK) {
-        err = tinyusb_msc_delete_storage(storage_handle);
-    }
-    if (err == ESP_OK) {
-        storage_handle = NULL;
-        err = tinyusb_msc_uninstall_driver();
-    }
-    if (err == ESP_OK) {
-        err = cerberus_storage_release_usb_card();
-        usb_card = NULL;
-    }
-    if (err == ESP_OK) {
-        err = cerberus_storage_release_from_usb();
-    }
-    if (err == ESP_OK) {
-        err = cerberus_storage_mount();
-    }
-    if (err == ESP_OK) {
-        err = cerberus_usb_console_start();
-    }
-
-    portENTER_CRITICAL(&status_lock);
-    mass_storage_status.active = err != ESP_OK;
-    mass_storage_status.host_attached = false;
-    mass_storage_status.safe_to_release = err == ESP_OK;
-    mass_storage_status.last_error = err;
-    portEXIT_CRITICAL(&status_lock);
+    esp_err_t err = restore_normal_usb();
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "microSD returned to firmware ownership");
+    }
+    else {
+        portENTER_CRITICAL(&status_lock);
+        mass_storage_status.last_error = err;
+        portEXIT_CRITICAL(&status_lock);
     }
     return err;
 }

@@ -1,0 +1,28 @@
+CERBERUS FIELD KIT - DEVELOPMENT BUILD
+
+S3: display, touch, SD files, reports, BLE passive observation and advertising.
+Onboard C5: 2.4/5 GHz Wi-Fi, packet survey and connected-network probes.
+Selected-AP 2.4 GHz tests temporarily use S3 Wi-Fi reception and pause S3 BLE.
+C5 still handles selected-device BLE GATT reads until its S3 migration is ready.
+Expansion C5s: Field survey. GPS is not installed on this unit.
+
+RECON.DB contains 40,210 /24 vendor entries and source references from
+Dragon Detector, CYM, SquachWatch and ChimeraBLE's registry source.
+Wi-Fi AP details, Field survey, public-address BLE details and Watch findings
+use its vendor labels. Vendor identity
+alone does not identify a particular product or prove malicious activity.
+Archived detection rules are references, not new enabled detections.
+
+Tools > SD files browses this card. Tools > Scripts can run HELLO.CBS.
+Scan reports and device logs are written beneath CERBERUS/LOGS.
+
+USB SD: start the drive, copy files, eject in the computer, then use
+RETURN SD TO FIRMWARE. The device cannot scan the filesystem while the
+computer owns the card. Do not remove a card while either is writing.
+
+The native serial console's resources command verifies RECON.DB from SD.
+RESOURCES.JSON records the complete bundle with file sizes and SHA-256.
+The database embeds source/license metadata; NOTICES.TXT lists attribution.
+
+The complete Marauder Wi-Fi/BLE feature inventory remains an integration
+target. This package does not install unimplemented attack services.

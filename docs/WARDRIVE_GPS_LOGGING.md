@@ -1,0 +1,17 @@
+# Integrated GPS logging
+
+The main Wardriving service now routes each valid observation to one SD stream. With GPS OFF, observations go to `CERBERUS/WARD/UNLOC###.CSV`. With GPS ON and a fresh, checksum-validated fix and RMC UTC, representable Wi-Fi/BLE observations go to `WIGLE###.CSV`. Absent GPS, stale/no fix, missing UTC, unsupported channel, or an SSID/name that cannot be faithfully represented in UTF-8 routes the observation to the unlocated stream. A row is never copied to both streams.
+
+Each stream opens lazily, rotates at 64 MiB, syncs every 25 rows or two seconds, and publishes its CSV only after close. Stop drains completed radio results, closes both files, and releases the SD lease. USB handoff is blocked even before the first lazy file opens. Interrupted files remain `.TMP`. Both filename sequences avoid overwriting existing CSV or TMP files.
+
+A short write or failed sync permanently marks that open stream failed. Stop closes it and retains its `.TMP` file, including any partial trailing row, even if the final flush succeeds. It cannot be renamed to CSV. The next file starts with a fresh failure state and a different available name.
+
+Separate bounded dedupe tables in the session's PSRAM workspace allow an identity collected without GPS to enter WiGLE immediately when a fix arrives. Failed SD appends do not commit dedupe. `geotagged_rows`, `unlocated_rows`, and `gps_fallback_rows` describe the actual routing.
+
+The preserved separate firmware associates its latest GPS fix with scan results when the S3 handles them. This integration retains that timing convention and declares `locationSource=GPS-at-result-receipt,timeSource=latest-RMC,rfTime=unavailable` in the WiGLE pre-header. C5 AP results and expansion FIFO records currently lack synchronized RF observation timestamps. These files do **not** claim frame-time geolocation; delayed scans/queues can associate a result with a later receiver position. A future timestamp protocol is required for that stronger guarantee.
+
+The 14-column layout follows the [WiGLE CSV 1.6 specification](https://api.wigle.net/csvFormat-1_6.html). BLE rows use channel 0, unknown device-type/frequency stays blank, and manufacturer ID is emitted only when known. Altitude stays blank when absent; HDOP is never substituted for accuracy in meters. The formatter requires GPS fix and RMC UTC ages of at most 1 second; other valid observations remain in the unlocated stream.
+
+The optional GPS UART retains its 3,584-byte reader stack and uses a 1,024-byte RX ring. At 9600 baud/8N1 that ring holds over one second of input, while the task polls every 100 ms. Post-NimBLE startup reserves are derived from the 32 KiB scanner gate and 6 KiB worker stack: 43,008 bytes without GPS; 45,568 bytes with GPS, including RX, reader stack, and 2 KiB for UART/task bookkeeping. Both admit the measured rev51 post-Stop free heap of 45,980 bytes. Actual GPS hardware and stack margin still require device validation.
+
+Two compact storage stream states occupy less static RAM than the former single stream's generic path buffers. The second dedupe table and 384-byte row buffer live in PSRAM. Host checks cover GPS acquisition/loss/recovery, UTF-8 fallback, BLE layout, retry/rotation, dual-file Stop and USB ownership, and the known no-GPS restart heap regression. These source changes require a new firmware build and hardware acceptance; no GPS module is connected during development.

@@ -1,4 +1,5 @@
 #include "ieee802154_scanner.h"
+#include "radio_test_service.h"
 
 #include "ble_scanner.h"
 #include "wifi_scanner.h"
@@ -26,8 +27,6 @@
 static const char *TAG = "ieee802154_scan";
 static SemaphoreHandle_t scanner_mutex;
 static TaskHandle_t scanner_task_handle;
-static TaskHandle_t beacon_task_handle;
-static TaskHandle_t activity_task_handle;
 static QueueHandle_t beacon_queue;
 static cerberus_ieee802154_energy_scan_status_payload_t scan_status;
 static int8_t scan_power[CERBERUS_IEEE802154_CHANNEL_COUNT];
@@ -242,7 +241,7 @@ static bool another_radio_operation_is_active(void)
         wifi_connection.state == CERBERUS_WIFI_CONNECTION_CONNECTING ||
         wifi_connection.state == CERBERUS_WIFI_CONNECTION_CONNECTED ||
         wifi_connection.state == CERBERUS_WIFI_CONNECTION_DISCONNECTING ||
-        cerberus_wifi_defense_survey_is_running() ||
+        cerberus_wifi_defense_survey_is_running() || cerberus_wifi_station_running() ||
         ble_status.state == CERBERUS_BLE_SCAN_RUNNING || connection_active;
 }
 
@@ -385,28 +384,72 @@ static esp_err_t scan_one_channel(uint8_t channel, int8_t *power)
     return ESP_ERR_TIMEOUT;
 }
 
-static void scanner_task(void *arg)
+static void run_energy_scan(void)
 {
-    (void)arg;
-    while (true) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    esp_err_t err = esp_ieee802154_enable();
+    for (uint8_t index = 0;
+         err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
+         ++index) {
+        uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
+        xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+        scan_status.current_channel = channel;
+        xSemaphoreGive(scanner_mutex);
 
-        esp_err_t err = esp_ieee802154_enable();
-        for (uint8_t index = 0;
-             err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
-             ++index) {
-            uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
+        int8_t power = CERBERUS_IEEE802154_POWER_UNMEASURED;
+        err = scan_one_channel(channel, &power);
+        if (err == ESP_OK) {
             xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-            scan_status.current_channel = channel;
+            scan_power[index] = power;
+            scan_status.completed_count = index + 1U;
             xSemaphoreGive(scanner_mutex);
+        }
+    }
 
-            int8_t power = CERBERUS_IEEE802154_POWER_UNMEASURED;
-            err = scan_one_channel(channel, &power);
-            if (err == ESP_OK) {
-                xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-                scan_power[index] = power;
-                scan_status.completed_count = index + 1U;
-                xSemaphoreGive(scanner_mutex);
+    esp_err_t sleep_err = esp_ieee802154_sleep();
+    if (err == ESP_OK && sleep_err != ESP_OK) {
+        err = sleep_err;
+    }
+    esp_err_t disable_err = esp_ieee802154_disable();
+    if (err == ESP_OK && disable_err != ESP_OK) {
+        err = disable_err;
+    }
+    finish_scan(err);
+}
+
+static void run_beacon_scan(void)
+{
+    esp_err_t err = esp_ieee802154_enable();
+    if (err == ESP_OK) {
+        err = esp_ieee802154_set_coordinator(false);
+    }
+    if (err == ESP_OK) {
+        err = esp_ieee802154_set_promiscuous(true);
+    }
+    beacon_scan_active = err == ESP_OK;
+
+    for (uint8_t index = 0;
+         err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
+         ++index) {
+        uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
+        xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+        beacon_status.current_channel = channel;
+        xSemaphoreGive(scanner_mutex);
+
+        err = esp_ieee802154_set_channel(channel);
+        if (err == ESP_OK) {
+            err = esp_ieee802154_receive();
+        }
+
+        TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(IEEE802154_BEACON_DWELL_MS);
+        while (err == ESP_OK && (int32_t)(deadline - xTaskGetTickCount()) > 0) {
+            cerberus_ieee802154_beacon_scan_result_payload_t observation;
+            TickType_t remaining = deadline - xTaskGetTickCount();
+            TickType_t wait_ticks = pdMS_TO_TICKS(50U);
+            if (wait_ticks == 0U || wait_ticks > remaining) {
+                wait_ticks = remaining;
+            }
+            if (xQueueReceive(beacon_queue, &observation, wait_ticks) == pdTRUE) {
+                store_beacon_observation(&observation);
             }
         }
 
@@ -414,141 +457,103 @@ static void scanner_task(void *arg)
         if (err == ESP_OK && sleep_err != ESP_OK) {
             err = sleep_err;
         }
-        esp_err_t disable_err = esp_ieee802154_disable();
-        if (err == ESP_OK && disable_err != ESP_OK) {
-            err = disable_err;
-        }
-        finish_scan(err);
-    }
-}
-
-static void beacon_scanner_task(void *arg)
-{
-    (void)arg;
-    while (true) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        esp_err_t err = esp_ieee802154_enable();
-        if (err == ESP_OK) {
-            err = esp_ieee802154_set_coordinator(false);
+        cerberus_ieee802154_beacon_scan_result_payload_t observation;
+        while (xQueueReceive(beacon_queue, &observation, 0U) == pdTRUE) {
+            store_beacon_observation(&observation);
         }
         if (err == ESP_OK) {
-            err = esp_ieee802154_set_promiscuous(true);
-        }
-        beacon_scan_active = err == ESP_OK;
-
-        for (uint8_t index = 0;
-             err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
-             ++index) {
-            uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
             xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-            beacon_status.current_channel = channel;
+            beacon_status.completed_count = index + 1U;
             xSemaphoreGive(scanner_mutex);
-
-            err = esp_ieee802154_set_channel(channel);
-            if (err == ESP_OK) {
-                err = esp_ieee802154_receive();
-            }
-
-            TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(IEEE802154_BEACON_DWELL_MS);
-            while (err == ESP_OK && (int32_t)(deadline - xTaskGetTickCount()) > 0) {
-                cerberus_ieee802154_beacon_scan_result_payload_t observation;
-                TickType_t remaining = deadline - xTaskGetTickCount();
-                TickType_t wait_ticks = pdMS_TO_TICKS(50U);
-                if (wait_ticks == 0U || wait_ticks > remaining) {
-                    wait_ticks = remaining;
-                }
-                if (xQueueReceive(beacon_queue, &observation, wait_ticks) == pdTRUE) {
-                    store_beacon_observation(&observation);
-                }
-            }
-
-            esp_err_t sleep_err = esp_ieee802154_sleep();
-            if (err == ESP_OK && sleep_err != ESP_OK) {
-                err = sleep_err;
-            }
-            cerberus_ieee802154_beacon_scan_result_payload_t observation;
-            while (xQueueReceive(beacon_queue, &observation, 0U) == pdTRUE) {
-                store_beacon_observation(&observation);
-            }
-            if (err == ESP_OK) {
-                xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-                beacon_status.completed_count = index + 1U;
-                xSemaphoreGive(scanner_mutex);
-            }
         }
-
-        beacon_scan_active = false;
-        esp_err_t promiscuous_err = esp_ieee802154_set_promiscuous(false);
-        if (err == ESP_OK && promiscuous_err != ESP_OK) {
-            err = promiscuous_err;
-        }
-        esp_err_t disable_err = esp_ieee802154_disable();
-        if (err == ESP_OK && disable_err != ESP_OK) {
-            err = disable_err;
-        }
-        finish_beacon_scan(err);
     }
+
+    beacon_scan_active = false;
+    esp_err_t promiscuous_err = esp_ieee802154_set_promiscuous(false);
+    if (err == ESP_OK && promiscuous_err != ESP_OK) {
+        err = promiscuous_err;
+    }
+    esp_err_t disable_err = esp_ieee802154_disable();
+    if (err == ESP_OK && disable_err != ESP_OK) {
+        err = disable_err;
+    }
+    finish_beacon_scan(err);
 }
 
-static void activity_scanner_task(void *arg)
+static void run_activity_scan(void)
 {
-    (void)arg;
-    while (true) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    esp_err_t err = esp_ieee802154_enable();
+    if (err == ESP_OK) {
+        err = esp_ieee802154_set_coordinator(false);
+    }
+    if (err == ESP_OK) {
+        err = esp_ieee802154_set_promiscuous(true);
+    }
+    activity_scan_active = err == ESP_OK;
 
-        esp_err_t err = esp_ieee802154_enable();
+    for (uint8_t index = 0;
+         err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
+         ++index) {
+        uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
+        xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+        activity_status.current_channel = channel;
+        activity_status.total_frames = activity_total_frames;
+        xSemaphoreGive(scanner_mutex);
+
+        err = esp_ieee802154_set_channel(channel);
         if (err == ESP_OK) {
-            err = esp_ieee802154_set_coordinator(false);
+            err = esp_ieee802154_receive();
         }
         if (err == ESP_OK) {
-            err = esp_ieee802154_set_promiscuous(true);
+            vTaskDelay(pdMS_TO_TICKS(IEEE802154_ACTIVITY_DWELL_MS));
         }
-        activity_scan_active = err == ESP_OK;
-
-        for (uint8_t index = 0;
-             err == ESP_OK && index < CERBERUS_IEEE802154_CHANNEL_COUNT;
-             ++index) {
-            uint8_t channel = CERBERUS_IEEE802154_FIRST_CHANNEL + index;
+        esp_err_t sleep_err = esp_ieee802154_sleep();
+        if (err == ESP_OK && sleep_err != ESP_OK) {
+            err = sleep_err;
+        }
+        if (err == ESP_OK) {
             xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-            activity_status.current_channel = channel;
+            activity_status.completed_count = index + 1U;
             activity_status.total_frames = activity_total_frames;
             xSemaphoreGive(scanner_mutex);
+        }
+    }
 
-            err = esp_ieee802154_set_channel(channel);
-            if (err == ESP_OK) {
-                err = esp_ieee802154_receive();
-            }
-            if (err == ESP_OK) {
-                vTaskDelay(pdMS_TO_TICKS(IEEE802154_ACTIVITY_DWELL_MS));
-            }
-            esp_err_t sleep_err = esp_ieee802154_sleep();
-            if (err == ESP_OK && sleep_err != ESP_OK) {
-                err = sleep_err;
-            }
-            if (err == ESP_OK) {
-                xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-                activity_status.completed_count = index + 1U;
-                activity_status.total_frames = activity_total_frames;
-                xSemaphoreGive(scanner_mutex);
-            }
-        }
+    activity_scan_active = false;
+    esp_err_t promiscuous_err = esp_ieee802154_set_promiscuous(false);
+    if (err == ESP_OK && promiscuous_err != ESP_OK) {
+        err = promiscuous_err;
+    }
+    esp_err_t disable_err = esp_ieee802154_disable();
+    if (err == ESP_OK && disable_err != ESP_OK) {
+        err = disable_err;
+    }
+    finish_activity_scan(err);
+}
 
-        activity_scan_active = false;
-        esp_err_t promiscuous_err = esp_ieee802154_set_promiscuous(false);
-        if (err == ESP_OK && promiscuous_err != ESP_OK) {
-            err = promiscuous_err;
-        }
-        esp_err_t disable_err = esp_ieee802154_disable();
-        if (err == ESP_OK && disable_err != ESP_OK) {
-            err = disable_err;
-        }
-        finish_activity_scan(err);
+/* All three modes already exclude each other. One resident worker keeps the
+ * same stack headroom while avoiding two idle 4 KiB stacks and their TCBs. */
+static void scanner_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+        bool energy = scan_status.state == CERBERUS_IEEE802154_ENERGY_SCAN_RUNNING;
+        bool beacon = beacon_status.state == CERBERUS_IEEE802154_BEACON_SCAN_RUNNING;
+        bool activity = activity_status.state == CERBERUS_IEEE802154_ACTIVITY_SCAN_RUNNING;
+        xSemaphoreGive(scanner_mutex);
+        if (energy) run_energy_scan();
+        else if (beacon) run_beacon_scan();
+        else if (activity) run_activity_scan();
+        /* A spurious/stale notification must not restart a completed sweep. */
     }
 }
 
 esp_err_t cerberus_ieee802154_scanner_init(void)
 {
+    /* Initialization is owned by app_main; repeated calls reuse the worker. */
+    if (scanner_task_handle != NULL) return ESP_OK;
     scanner_mutex = xSemaphoreCreateMutex();
     if (scanner_mutex == NULL) {
         return ESP_ERR_NO_MEM;
@@ -567,41 +572,22 @@ esp_err_t cerberus_ieee802154_scanner_init(void)
         IEEE802154_BEACON_QUEUE_LENGTH,
         sizeof(cerberus_ieee802154_beacon_scan_result_payload_t));
     if (beacon_queue == NULL) {
+        vSemaphoreDelete(scanner_mutex);
+        scanner_mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(
-            scanner_task,
-            "ieee802154_scan",
-            IEEE802154_SCAN_TASK_STACK,
-            NULL,
-            IEEE802154_SCAN_TASK_PRIORITY,
-            &scanner_task_handle) != pdPASS) {
+    if (xTaskCreate(scanner_task, "ieee802154_scan", IEEE802154_SCAN_TASK_STACK,
+            NULL, IEEE802154_SCAN_TASK_PRIORITY, &scanner_task_handle) != pdPASS) {
         scan_status.state = CERBERUS_IEEE802154_ENERGY_SCAN_ERROR;
         scan_status.error_code = ESP_ERR_NO_MEM;
-        return ESP_ERR_NO_MEM;
-    }
-
-    if (xTaskCreate(
-            beacon_scanner_task,
-            "ieee802154_beacon",
-            IEEE802154_SCAN_TASK_STACK,
-            NULL,
-            IEEE802154_SCAN_TASK_PRIORITY,
-            &beacon_task_handle) != pdPASS) {
         beacon_status.state = CERBERUS_IEEE802154_BEACON_SCAN_ERROR;
         beacon_status.error_code = ESP_ERR_NO_MEM;
-        return ESP_ERR_NO_MEM;
-    }
-
-    if (xTaskCreate(
-            activity_scanner_task,
-            "ieee802154_activity",
-            IEEE802154_SCAN_TASK_STACK,
-            NULL,
-            IEEE802154_SCAN_TASK_PRIORITY,
-            &activity_task_handle) != pdPASS) {
         activity_status.state = CERBERUS_IEEE802154_ACTIVITY_SCAN_ERROR;
         activity_status.error_code = ESP_ERR_NO_MEM;
+        vQueueDelete(beacon_queue);
+        beacon_queue = NULL;
+        vSemaphoreDelete(scanner_mutex);
+        scanner_mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -611,6 +597,7 @@ esp_err_t cerberus_ieee802154_scanner_init(void)
 
 esp_err_t cerberus_ieee802154_scanner_start(void)
 {
+    if(cerberus_c5_test_running())return ESP_ERR_INVALID_STATE;
     if (scanner_mutex == NULL || scanner_task_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -698,7 +685,8 @@ esp_err_t cerberus_ieee802154_scanner_get_result(
 
 esp_err_t cerberus_ieee802154_beacon_scanner_start(void)
 {
-    if (scanner_mutex == NULL || beacon_task_handle == NULL || beacon_queue == NULL) {
+    if(cerberus_c5_test_running())return ESP_ERR_INVALID_STATE;
+    if (scanner_mutex == NULL || scanner_task_handle == NULL || beacon_queue == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     if (another_radio_operation_is_active()) {
@@ -732,7 +720,7 @@ esp_err_t cerberus_ieee802154_beacon_scanner_start(void)
     xQueueReset(beacon_queue);
     xSemaphoreGive(scanner_mutex);
 
-    xTaskNotifyGive(beacon_task_handle);
+    xTaskNotifyGive(scanner_task_handle);
     return ESP_OK;
 }
 
@@ -776,7 +764,8 @@ esp_err_t cerberus_ieee802154_beacon_scanner_get_result(
 
 esp_err_t cerberus_ieee802154_activity_scanner_start(void)
 {
-    if (scanner_mutex == NULL || activity_task_handle == NULL) {
+    if(cerberus_c5_test_running())return ESP_ERR_INVALID_STATE;
+    if (scanner_mutex == NULL || scanner_task_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     if (another_radio_operation_is_active()) {
@@ -808,7 +797,7 @@ esp_err_t cerberus_ieee802154_activity_scanner_start(void)
     memset((void *)activity_counts, 0, sizeof(activity_counts));
     xSemaphoreGive(scanner_mutex);
 
-    xTaskNotifyGive(activity_task_handle);
+    xTaskNotifyGive(scanner_task_handle);
     return ESP_OK;
 }
 

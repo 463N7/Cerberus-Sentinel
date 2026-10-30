@@ -1,6 +1,9 @@
 # Production N16R2 has 2 MB QUAD PSRAM. Never select octal mode: GPIO35-37
 # are the microSD bus. Keep DMA, stacks and ordinary malloc in internal RAM;
 # optional artwork buffers may explicitly request MALLOC_CAP_SPIRAM.
+# Explicit release optimization: the pinned Xtensa compiler crashes in the
+# IDF RGB driver under the generated debug-optimization configuration.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_QUAD=y
 CONFIG_SPIRAM_MODE_OCT=n

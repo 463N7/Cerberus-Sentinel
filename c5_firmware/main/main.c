@@ -6,7 +6,10 @@
 #include "ieee802154_scanner.h"
 #include "mdns_scanner.h"
 #include "network_diagnostics.h"
+#include "network_scanner.h"
+#include "radio_test_service.h"
 #include "wifi_scanner.h"
+#include "wifi_capture_service.h"
 
 #include "driver/gpio.h"
 #include "driver/spi_slave.h"
@@ -53,6 +56,8 @@ static uint8_t current_radio_state(void)
     cerberus_ieee802154_activity_scanner_get_status(&activity_status);
 
     uint8_t state = 0U;
+    if (cerberus_c5_test_running()) state |= CERBERUS_C5_RADIO_TEST;
+    if (cerberus_wifi_station_running()) state |= CERBERUS_C5_RADIO_WIFI_STATIONS;
     if (wifi_status.state == CERBERUS_WIFI_SCAN_RUNNING) {
         state |= CERBERUS_C5_RADIO_WIFI_SCAN;
     }
@@ -208,6 +213,56 @@ static void prepare_v2_response(const cerberus_spi_frame_t *request)
         prepare_frame_response((cerberus_spi_command_t)request->command, request->sequence, &payload, sizeof(payload));
         break;
     }
+    case CERBERUS_SPI_COMMAND_WIFI_RELATION_STATUS: {
+        if (request->payload_length != sizeof(cerberus_wifi_relation_status_query_t)) return;
+        cerberus_wifi_relation_status_query_t query;
+        cerberus_wifi_relation_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_relation_get_status(query.generation, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_RELATION_STATUS, request->sequence,
+                &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_RELATION_CHUNK: {
+        if (request->payload_length != sizeof(cerberus_wifi_relation_query_t)) return;
+        cerberus_wifi_relation_query_t query;
+        cerberus_wifi_relation_chunk_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_relation_get_result_chunk(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_RELATION_CHUNK, request->sequence,
+                &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_RELATION_CLOCK: {
+        if (request->payload_length != sizeof(cerberus_wifi_relation_clock_query_t)) return;
+        cerberus_wifi_relation_clock_query_t query;
+        cerberus_wifi_relation_clock_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_relation_get_source_clock(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_RELATION_CLOCK, request->sequence,
+                &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_PROBE_STATUS: {
+        if (request->payload_length != sizeof(cerberus_wifi_probe_status_query_t)) return;
+        cerberus_wifi_probe_status_query_t query;
+        cerberus_wifi_probe_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_probe_get_status(query.generation, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_PROBE_STATUS, request->sequence,
+                &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_PROBE_CHUNK: {
+        if (request->payload_length != sizeof(cerberus_wifi_probe_query_t)) return;
+        cerberus_wifi_probe_query_t query;
+        cerberus_wifi_probe_chunk_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_probe_get_result_chunk(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_PROBE_CHUNK, request->sequence,
+                &payload, sizeof(payload));
+        break;
+    }
     case CERBERUS_SPI_COMMAND_WIFI_SCAN_RESULT: {
         if (request->payload_length != sizeof(cerberus_wifi_scan_result_request_t)) {
             return;
@@ -233,12 +288,136 @@ static void prepare_v2_response(const cerberus_spi_frame_t *request)
         }
         break;
     }
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_START:
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_STATUS:
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_STOP: {
+        esp_err_t error=ESP_OK;
+        if(request->command==CERBERUS_SPI_COMMAND_WIFI_CAPTURE_START){
+            if(request->payload_length!=sizeof(cerberus_wifi_capture_start_request_t))return;
+            cerberus_wifi_capture_start_request_t query;
+            memcpy(&query,request->payload,sizeof(query));
+            error=cerberus_wifi_capture_start(&query);
+        }else if(request->command==CERBERUS_SPI_COMMAND_WIFI_CAPTURE_STOP){
+            if(request->payload_length!=sizeof(cerberus_wifi_capture_stop_request_t))return;
+            cerberus_wifi_capture_stop_request_t query;
+            memcpy(&query,request->payload,sizeof(query));
+            error=cerberus_wifi_capture_stop(query.generation);
+        }else if(request->payload_length!=0U)return;
+        cerberus_wifi_capture_status_payload_t payload;
+        cerberus_wifi_capture_status(&payload);
+        if(error!=ESP_OK){payload.state=CERBERUS_WIFI_CAPTURE_ERROR;payload.error_code=error;}
+        prepare_frame_response((cerberus_spi_command_t)request->command,
+            request->sequence,&payload,sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_PEEK: {
+        if(request->payload_length!=sizeof(cerberus_wifi_capture_stop_request_t))return;
+        cerberus_wifi_capture_stop_request_t query;
+        cerberus_wifi_capture_peek_payload_t payload;
+        memcpy(&query,request->payload,sizeof(query));
+        if(cerberus_wifi_capture_service_peek(query.generation,&payload)==ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_PEEK,
+                request->sequence,&payload,sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_READ: {
+        if(request->payload_length!=sizeof(cerberus_wifi_capture_read_request_t))return;
+        cerberus_wifi_capture_read_request_t query;
+        cerberus_wifi_capture_read_payload_t payload;
+        memcpy(&query,request->payload,sizeof(query));
+        if(cerberus_wifi_capture_service_read(&query,&payload)==ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_READ,
+                request->sequence,&payload,sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_CAPTURE_ACK: {
+        if(request->payload_length!=sizeof(cerberus_wifi_capture_ack_request_t))return;
+        cerberus_wifi_capture_ack_request_t query;
+        memcpy(&query,request->payload,sizeof(query));
+        int32_t error=cerberus_wifi_capture_service_ack(&query);
+        prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_CAPTURE_ACK,
+            request->sequence,&error,sizeof(error));
+        break;
+    }
     case CERBERUS_SPI_COMMAND_WIFI_RADIO_STATS: {
         if (request->payload_length != 0U) return;
         cerberus_wifi_radio_stats_payload_t payload;
         cerberus_wifi_scanner_get_radio_stats(&payload);
         prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_RADIO_STATS,
             request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_START:
+    case CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_STOP:
+    case CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_STATUS: {
+        esp_err_t action_error = ESP_OK;
+        if (request->command == CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_START) {
+            if (request->payload_length != sizeof(cerberus_wifi_channel_survey_start_request_t)) return;
+            cerberus_wifi_channel_survey_start_request_t query;
+            memcpy(&query, request->payload, sizeof(query));
+            action_error = cerberus_wifi_channel_survey_start(query.band);
+        } else if (request->command == CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_STOP) {
+            if (request->payload_length != 0U) return;
+            action_error = cerberus_wifi_channel_survey_preempt();
+        } else if (request->payload_length != 0U) return;
+        cerberus_wifi_channel_survey_status_payload_t payload;
+        cerberus_wifi_channel_survey_get_status(&payload);
+        if (action_error != ESP_OK) {
+            payload.state = CERBERUS_WIFI_CHANNEL_SURVEY_ERROR;
+            payload.error_code = action_error;
+        }
+        prepare_frame_response((cerberus_spi_command_t)request->command,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_RESULT: {
+        if (request->payload_length != sizeof(cerberus_wifi_channel_survey_result_request_t)) return;
+        cerberus_wifi_channel_survey_result_request_t query;
+        cerberus_wifi_channel_survey_result_payload_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_channel_survey_get_result(query.generation,
+            query.index, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_CHANNEL_SURVEY_RESULT,
+                request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_START:
+    case CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_STOP:
+    case CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_STATUS: {
+        esp_err_t action_error = ESP_OK;
+        if (request->command == CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_START) {
+            if (request->payload_length !=
+                sizeof(cerberus_wifi_packet_monitor_start_request_t)) return;
+            cerberus_wifi_packet_monitor_start_request_t query;
+            memcpy(&query, request->payload, sizeof(query));
+            action_error = cerberus_wifi_packet_monitor_start(query.channel);
+        } else if (request->command == CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_STOP) {
+            if (request->payload_length !=
+                sizeof(cerberus_wifi_packet_monitor_stop_request_t)) return;
+            cerberus_wifi_packet_monitor_stop_request_t query;
+            memcpy(&query, request->payload, sizeof(query));
+            action_error = cerberus_wifi_packet_monitor_stop(query.generation);
+        } else if (request->payload_length != 0U) return;
+        cerberus_wifi_packet_monitor_status_payload_t payload;
+        cerberus_wifi_packet_monitor_get_status(&payload);
+        if (action_error != ESP_OK) {
+            payload.state = CERBERUS_WIFI_PACKET_MONITOR_ERROR;
+            payload.error_code = action_error;
+        }
+        prepare_frame_response((cerberus_spi_command_t)request->command,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_SAMPLE: {
+        if (request->payload_length !=
+            sizeof(cerberus_wifi_packet_monitor_sample_request_t)) return;
+        cerberus_wifi_packet_monitor_sample_request_t query;
+        cerberus_wifi_packet_monitor_sample_payload_t sample;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_packet_monitor_get_sample(query.generation,
+                query.sequence, &sample) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_PACKET_MONITOR_SAMPLE,
+                request->sequence, &sample, sizeof(sample));
         break;
     }
     case CERBERUS_SPI_COMMAND_WIFI_DEFENSE_START:
@@ -313,6 +492,130 @@ static void prepare_v2_response(const cerberus_spi_frame_t *request)
         cerberus_wifi_connection_get_dns_status(&payload);
         prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_DNS_STATUS,
             request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_AP_VALIDATE: {
+        if(request->payload_length!=sizeof(cerberus_wifi_ap_job_t))return;
+        cerberus_wifi_ap_job_t query;memcpy(&query,request->payload,sizeof(query));
+        int32_t error=current_radio_state()!=0?ESP_ERR_INVALID_STATE:cerberus_wifi_ap_target_valid(&query);
+        prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_AP_VALIDATE,request->sequence,&error,sizeof(error));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_AP_STATION_BEGIN: {
+        if(request->payload_length!=sizeof(cerberus_wifi_ap_station_begin_t))return;
+        cerberus_wifi_ap_station_begin_t query;memcpy(&query,request->payload,sizeof(query));
+        int32_t error=cerberus_c5_ap_stage_begin(&query,current_radio_state()!=0);
+        prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_AP_STATION_BEGIN,request->sequence,&error,sizeof(error));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_AP_STATION_CHUNK: {
+        if(request->payload_length!=sizeof(cerberus_wifi_ap_station_chunk_t))return;
+        cerberus_wifi_ap_station_chunk_t query;memcpy(&query,request->payload,sizeof(query));
+        int32_t error=cerberus_c5_ap_stage_chunk(&query);
+        prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_AP_STATION_CHUNK,request->sequence,&error,sizeof(error));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_AP_START:
+    case CERBERUS_SPI_COMMAND_RADIO_TEST_BEGIN:
+    case CERBERUS_SPI_COMMAND_RADIO_TEST_CHUNK:
+    case CERBERUS_SPI_COMMAND_RADIO_TEST_START:
+    case CERBERUS_SPI_COMMAND_RADIO_TEST_STATUS:
+    case CERBERUS_SPI_COMMAND_RADIO_TEST_STOP: {
+        esp_err_t err=ESP_OK;
+        uint16_t id=0;
+        if(request->command==CERBERUS_SPI_COMMAND_WIFI_AP_START){
+            if(request->payload_length!=sizeof(cerberus_wifi_ap_job_t))return;
+            cerberus_wifi_ap_job_t query;memcpy(&query,request->payload,sizeof(query));id=query.job_id;
+            err=cerberus_wifi_channel_survey_preempt();
+            if(err==ESP_OK)
+                err=cerberus_c5_ap_start(&query,(current_radio_state()&~CERBERUS_C5_RADIO_TEST)!=0);
+        } else if(request->command==CERBERUS_SPI_COMMAND_RADIO_TEST_BEGIN){
+            if(request->payload_length!=sizeof(cerberus_radio_test_begin_t))return;
+            cerberus_radio_test_begin_t query;memcpy(&query,request->payload,sizeof(query));
+            id=query.job_id;err=cerberus_c5_test_begin(&query);
+        } else if(request->command==CERBERUS_SPI_COMMAND_RADIO_TEST_CHUNK){
+            if(request->payload_length!=sizeof(cerberus_radio_test_chunk_t))return;
+            cerberus_radio_test_chunk_t query;memcpy(&query,request->payload,sizeof(query));
+            id=query.job_id;err=cerberus_c5_test_chunk(&query);
+        } else {
+            if(request->payload_length!=sizeof(id))return;
+            memcpy(&id,request->payload,sizeof(id));
+            if(request->command==CERBERUS_SPI_COMMAND_RADIO_TEST_START){
+                err=cerberus_wifi_channel_survey_preempt();
+                cerberus_wifi_connection_status_payload_t link;
+                cerberus_wifi_connection_get_status(&link);
+                bool busy=(current_radio_state() & ~CERBERUS_C5_RADIO_TEST)!=0 ||
+                    (link.state!=CERBERUS_WIFI_CONNECTION_IDLE && link.state!=CERBERUS_WIFI_CONNECTION_ERROR);
+                if(err==ESP_OK)err=cerberus_c5_test_start(id,busy);
+            } else if(request->command==CERBERUS_SPI_COMMAND_RADIO_TEST_STOP)err=cerberus_c5_test_stop(id);
+        }
+        cerberus_radio_test_status_t payload;
+        cerberus_c5_test_status(request->command==CERBERUS_SPI_COMMAND_RADIO_TEST_STATUS?id:0,&payload);
+        if(err!=ESP_OK){
+            if(request->command==CERBERUS_SPI_COMMAND_WIFI_AP_START)
+                payload=(cerberus_radio_test_status_t){.job_id=id,.state=CERBERUS_TEST_ERROR,.mode=CERBERUS_TEST_WIFI_AP};
+            payload.error_code=err;
+        }
+        prepare_frame_response((cerberus_spi_command_t)request->command,request->sequence,&payload,sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_STATION_START:
+    case CERBERUS_SPI_COMMAND_WIFI_STATION_STATUS:
+    case CERBERUS_SPI_COMMAND_WIFI_STATION_STOP: {
+        esp_err_t error=ESP_OK;uint16_t id=0;
+        if(request->command==CERBERUS_SPI_COMMAND_WIFI_STATION_START){
+            if(request->payload_length!=sizeof(cerberus_wifi_station_request_t))return;
+            cerberus_wifi_station_request_t r;memcpy(&r,request->payload,sizeof(r));id=r.job_id;
+            error=cerberus_wifi_channel_survey_preempt();
+            if(error==ESP_OK)error=cerberus_wifi_station_start(&r);
+        }else{
+            if(request->payload_length!=sizeof(id))return;
+            memcpy(&id,request->payload,sizeof(id));
+            if(request->command==CERBERUS_SPI_COMMAND_WIFI_STATION_STOP)error=cerberus_wifi_station_stop(id);
+        }
+        cerberus_wifi_station_status_t payload;
+        cerberus_wifi_station_status(request->command==CERBERUS_SPI_COMMAND_WIFI_STATION_STATUS?id:0,&payload);
+        if(error!=ESP_OK)payload=(cerberus_wifi_station_status_t){.job_id=id,.state=CERBERUS_STATION_ERROR,.error_code=error};
+        prepare_frame_response((cerberus_spi_command_t)request->command,request->sequence,&payload,sizeof(payload));break;
+    }
+    case CERBERUS_SPI_COMMAND_WIFI_STATION_RESULT: {
+        if(request->payload_length!=sizeof(cerberus_wifi_station_query_t))return;
+        cerberus_wifi_station_query_t query;cerberus_wifi_station_result_t result;
+        memcpy(&query,request->payload,sizeof(query));
+        if(cerberus_wifi_station_result(&query,&result)==ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_WIFI_STATION_RESULT,request->sequence,&result,sizeof(result));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_NET_SCAN_START:
+    case CERBERUS_SPI_COMMAND_NET_SCAN_STATUS:
+    case CERBERUS_SPI_COMMAND_NET_SCAN_STOP: {
+        esp_err_t err = ESP_OK;
+        if (request->command == CERBERUS_SPI_COMMAND_NET_SCAN_START) {
+            if (request->payload_length != sizeof(cerberus_net_scan_request_t)) return;
+            cerberus_net_scan_request_t query;
+            memcpy(&query, request->payload, sizeof(query));
+            err = cerberus_network_scanner_start(&query);
+        } else if (request->command == CERBERUS_SPI_COMMAND_NET_SCAN_STOP) {
+            if (request->payload_length != sizeof(uint16_t)) return;
+            uint16_t job_id;
+            memcpy(&job_id, request->payload, sizeof(job_id));
+            err = cerberus_network_scanner_stop(job_id);
+        } else if (request->payload_length != 0) return;
+        cerberus_net_scan_status_t payload;
+        cerberus_network_scanner_status(&payload);
+        if (err != ESP_OK) payload.error_code = err;
+        prepare_frame_response((cerberus_spi_command_t)request->command,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_NET_SCAN_RESULT: {
+        if (request->payload_length != sizeof(cerberus_net_scan_query_t)) return;
+        cerberus_net_scan_query_t query;
+        cerberus_net_scan_result_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_network_scanner_result(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_NET_SCAN_RESULT,
+                request->sequence, &payload, sizeof(payload));
         break;
     }
     case CERBERUS_SPI_COMMAND_NETWORK_DIAGNOSTICS_START:
@@ -443,6 +746,64 @@ static void prepare_v2_response(const cerberus_spi_frame_t *request)
             cerberus_ble_watch_get_data(&query, &payload) : query.radio == CERBERUS_WATCH_RADIO_WIFI ?
             cerberus_wifi_watch_get_data(&query, &payload) : ESP_ERR_INVALID_ARG;
         if (err == ESP_OK) prepare_frame_response(CERBERUS_SPI_COMMAND_WATCH_SCAN_DATA,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WATCH_SCAN_TIMING: {
+        if (request->payload_length != sizeof(cerberus_watch_scan_timing_request_t)) return;
+        cerberus_watch_scan_timing_request_t query;
+        cerberus_watch_scan_timing_payload_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        esp_err_t err = query.radio == CERBERUS_WATCH_RADIO_BLE ?
+            cerberus_ble_watch_get_timing(&query, &payload) : query.radio == CERBERUS_WATCH_RADIO_WIFI ?
+            cerberus_wifi_watch_get_timing(&query, &payload) : ESP_ERR_INVALID_ARG;
+        if (err == ESP_OK) prepare_frame_response(CERBERUS_SPI_COMMAND_WATCH_SCAN_TIMING,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_WATCH_SCAN_MOTION:
+    case CERBERUS_SPI_COMMAND_WATCH_SCAN_MOTION_TIMING: {
+        if (request->payload_length != sizeof(cerberus_watch_scan_data_request_t)) return;
+        cerberus_watch_scan_data_request_t query;
+        memcpy(&query, request->payload, sizeof(query));
+        if (query.chunk) return;
+        bool timing = request->command == CERBERUS_SPI_COMMAND_WATCH_SCAN_MOTION_TIMING;
+        cerberus_watch_scan_motion_payload_t motion_payload;
+        cerberus_watch_scan_timing_payload_t timing_payload;
+        esp_err_t err = query.radio == CERBERUS_WATCH_RADIO_BLE ?
+            (timing ? cerberus_ble_watch_get_motion_timing(&query, &timing_payload) :
+                cerberus_ble_watch_get_motion(&query, &motion_payload)) :
+            query.radio == CERBERUS_WATCH_RADIO_WIFI ?
+            (timing ? cerberus_wifi_watch_get_motion_timing(&query, &timing_payload) :
+                cerberus_wifi_watch_get_motion(&query, &motion_payload)) : ESP_ERR_INVALID_ARG;
+        if (err == ESP_OK) prepare_frame_response((cerberus_spi_command_t)request->command,
+            request->sequence, timing ? (const void *)&timing_payload : (const void *)&motion_payload,
+            CERBERUS_SPI_FRAME_PAYLOAD_SIZE);
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_REMOTE_ID_START: {
+        if (request->payload_length != sizeof(cerberus_remote_id_start_request_t)) return;
+        cerberus_remote_id_start_request_t query;
+        cerberus_remote_id_status_payload_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        cerberus_wifi_remote_id_start(&query, &payload);
+        prepare_frame_response(CERBERUS_SPI_COMMAND_REMOTE_ID_START,
+            request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_REMOTE_ID_STATUS:
+    case CERBERUS_SPI_COMMAND_REMOTE_ID_STOP:
+    case CERBERUS_SPI_COMMAND_REMOTE_ID_RENEW: {
+        if (request->payload_length != sizeof(cerberus_remote_id_job_request_t)) return;
+        cerberus_remote_id_job_request_t query;
+        cerberus_remote_id_status_payload_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (request->command == CERBERUS_SPI_COMMAND_REMOTE_ID_STATUS)
+            cerberus_wifi_remote_id_status(query.job_id, &payload);
+        else if (request->command == CERBERUS_SPI_COMMAND_REMOTE_ID_STOP)
+            cerberus_wifi_remote_id_stop(query.job_id, &payload);
+        else cerberus_wifi_remote_id_renew(query.job_id, &payload);
+        prepare_frame_response((cerberus_spi_command_t)request->command,
             request->sequence, &payload, sizeof(payload));
         break;
     }
@@ -689,6 +1050,141 @@ static void prepare_v2_response(const cerberus_spi_frame_t *request)
         }
         break;
     }
+    case CERBERUS_SPI_COMMAND_MAC_START: {
+        if (request->payload_length != sizeof(cerberus_mac_start_request_t)) return;
+        cerberus_mac_start_request_t query;
+        cerberus_mac_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_mac_start(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_MAC_START, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_MAC_STATUS: {
+        if (request->payload_length != sizeof(cerberus_mac_status_request_t)) return;
+        cerberus_mac_status_request_t query;
+        memcpy(&query, request->payload, sizeof(query));
+        union { cerberus_mac_status_t status; cerberus_mac_info_t info;
+            cerberus_mac_counters_t counters; cerberus_mac_profile_t profile; } payload;
+        esp_err_t error = ESP_ERR_INVALID_ARG;
+        if (query.page == CERBERUS_MAC_PAGE_CORE) error = cerberus_wifi_mac_get_status(&query.binding, &payload.status);
+        else if (query.page == CERBERUS_MAC_PAGE_COUNTERS) error = cerberus_wifi_mac_get_counters(&query.binding, &payload.counters);
+        else if (query.page == CERBERUS_MAC_PAGE_PROFILE) error = cerberus_wifi_mac_get_profile(&query.binding, &payload.profile);
+        else if (query.page == CERBERUS_MAC_PAGE_INFO && !query.binding.boot_id && !query.binding.job_id && !query.binding.epoch)
+            error = cerberus_wifi_mac_get_info(&payload.info);
+        if (error == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_MAC_STATUS, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_MAC_STOP:
+    case CERBERUS_SPI_COMMAND_MAC_PEEK: {
+        if (request->payload_length != sizeof(cerberus_mac_binding_t)) return;
+        cerberus_mac_binding_t query;
+        memcpy(&query, request->payload, sizeof(query));
+        union { cerberus_mac_status_t status; cerberus_mac_peek_t peek; } payload;
+        esp_err_t error = request->command == CERBERUS_SPI_COMMAND_MAC_STOP ?
+            cerberus_wifi_mac_stop(&query, &payload.status) : cerberus_wifi_mac_peek(&query, &payload.peek);
+        if (error == ESP_OK)
+            prepare_frame_response((cerberus_spi_command_t)request->command, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_MAC_RENEW: {
+        if (request->payload_length != sizeof(cerberus_mac_renew_request_t)) return;
+        cerberus_mac_renew_request_t query;
+        cerberus_mac_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_mac_renew(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_MAC_RENEW, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_MAC_READ: {
+        if (request->payload_length != sizeof(cerberus_mac_read_request_t)) return;
+        cerberus_mac_read_request_t query;
+        cerberus_mac_chunk_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_mac_read(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_MAC_READ, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_MAC_ACK: {
+        if (request->payload_length != sizeof(cerberus_mac_ack_request_t)) return;
+        cerberus_mac_ack_request_t query;
+        cerberus_mac_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_mac_ack(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_MAC_ACK, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_START: {
+        if (request->payload_length != sizeof(cerberus_csi_start_request_t)) return;
+        cerberus_csi_start_request_t query;
+        cerberus_csi_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_csi_start(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_CSI_START, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_STATUS: {
+        if (request->payload_length != sizeof(cerberus_csi_status_request_t)) return;
+        cerberus_csi_status_request_t query;
+        memcpy(&query, request->payload, sizeof(query));
+        cerberus_csi_binding_t binding = {.boot_id=query.boot_id, .job_id=query.job_id, .epoch=query.epoch};
+        union {
+            cerberus_csi_status_t status;
+            cerberus_csi_clock_t clock;
+            cerberus_csi_counters_t counters;
+            cerberus_csi_info_t info;
+            cerberus_csi_target_payload_t target;
+        } payload;
+        esp_err_t error = ESP_ERR_INVALID_ARG;
+        if (query.page == CERBERUS_CSI_PAGE_STATUS) error = cerberus_wifi_csi_get_status(&binding, &payload.status);
+        else if (query.page == CERBERUS_CSI_PAGE_CLOCK) error = cerberus_wifi_csi_get_clock(&binding, &payload.clock);
+        else if (query.page == CERBERUS_CSI_PAGE_COUNTERS) error = cerberus_wifi_csi_get_counters(&binding, &payload.counters);
+        else if (query.page == CERBERUS_CSI_PAGE_TARGET) error = cerberus_wifi_csi_get_target(&binding, &payload.target);
+        else if (query.page == CERBERUS_CSI_PAGE_INFO && !query.boot_id && !query.job_id && !query.epoch)
+            error = cerberus_wifi_csi_get_info(&payload.info);
+        if (error == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_CSI_STATUS, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_STOP:
+    case CERBERUS_SPI_COMMAND_CSI_PEEK: {
+        if (request->payload_length != sizeof(cerberus_csi_binding_t)) return;
+        cerberus_csi_binding_t query;
+        memcpy(&query, request->payload, sizeof(query));
+        union { cerberus_csi_status_t status; cerberus_csi_peek_t peek; } payload;
+        esp_err_t error = request->command == CERBERUS_SPI_COMMAND_CSI_STOP ?
+            cerberus_wifi_csi_stop(&query, &payload.status) : cerberus_wifi_csi_peek(&query, &payload.peek);
+        if (error == ESP_OK)
+            prepare_frame_response((cerberus_spi_command_t)request->command, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_RENEW: {
+        if (request->payload_length != sizeof(cerberus_csi_renew_request_t)) return;
+        cerberus_csi_renew_request_t query;
+        cerberus_csi_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_csi_renew(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_CSI_RENEW, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_READ: {
+        if (request->payload_length != sizeof(cerberus_csi_read_request_t)) return;
+        cerberus_csi_read_request_t query;
+        cerberus_csi_chunk_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_csi_read(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_CSI_READ, request->sequence, &payload, sizeof(payload));
+        break;
+    }
+    case CERBERUS_SPI_COMMAND_CSI_ACK: {
+        if (request->payload_length != sizeof(cerberus_csi_ack_request_t)) return;
+        cerberus_csi_ack_request_t query;
+        cerberus_csi_status_t payload;
+        memcpy(&query, request->payload, sizeof(query));
+        if (cerberus_wifi_csi_ack(&query, &payload) == ESP_OK)
+            prepare_frame_response(CERBERUS_SPI_COMMAND_CSI_ACK, request->sequence, &payload, sizeof(payload));
+        break;
+    }
     case CERBERUS_SPI_COMMAND_EVENT_QUEUE_STATUS: {
         if (request->payload_length != 0U) {
             return;
@@ -899,6 +1395,8 @@ void app_main(void)
 #endif
     ESP_LOGI(TAG, "Cerberus C5 base firmware starting");
     ESP_ERROR_CHECK(cerberus_protocol_self_test() ? ESP_OK : ESP_FAIL);
+    esp_err_t radio_test_err=cerberus_c5_test_init();
+    if(radio_test_err!=ESP_OK)ESP_LOGW(TAG,"radio test service unavailable: %s",esp_err_to_name(radio_test_err));
     esp_err_t wifi_err = cerberus_wifi_scanner_init();
     if (wifi_err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi scanner unavailable: %s", esp_err_to_name(wifi_err));
@@ -908,6 +1406,9 @@ void app_main(void)
         ESP_LOGW(TAG, "network diagnostics unavailable: %s",
             esp_err_to_name(network_diagnostics_err));
     }
+    esp_err_t network_scanner_err = cerberus_network_scanner_init();
+    if (network_scanner_err != ESP_OK)
+        ESP_LOGW(TAG, "network scanner unavailable: %s", esp_err_to_name(network_scanner_err));
     esp_err_t mdns_err = cerberus_mdns_scanner_init();
     if (mdns_err != ESP_OK) {
         ESP_LOGW(TAG, "mDNS discovery unavailable: %s", esp_err_to_name(mdns_err));

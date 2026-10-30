@@ -1,4 +1,5 @@
 #include "ble_scanner.h"
+#include "radio_test_service.h"
 
 #include "ieee802154_scanner.h"
 #include "wifi_scanner.h"
@@ -65,6 +66,10 @@ static struct ble_npl_callout scan_timeout_callout;
 static cerberus_ble_record_t scan_results[CERBERUS_BLE_SCAN_MAX_RESULTS];
 static cerberus_ble_scan_status_payload_t scan_status;
 static cerberus_watch_capture_t watch_capture;
+static uint64_t watch_capture_epoch;
+/* NimBLE's callback argument is pointer-width, as on the S3 scanner. This
+ * private token separates delayed events from the eight-bit public generation. */
+static uint32_t scan_callback_epoch;
 static cerberus_ble_activity_capture_t activity_capture;
 static cerberus_ble_connection_status_payload_t connection_status;
 static cerberus_ble_gatt_service_result_payload_t
@@ -165,7 +170,8 @@ static void copy_raw_advertisement(cerberus_ble_record_t *record,
     if (record->reports_seen < UINT16_MAX) ++record->reports_seen;
 }
 
-static void record_advertisement(const struct ble_gap_disc_desc *discovery)
+static void record_advertisement(const struct ble_gap_disc_desc *discovery,
+    uint32_t epoch, int64_t callback_us)
 {
     if (discovery == NULL || (discovery->length_data != 0U && discovery->data == NULL) ||
         discovery->event_type == BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP) return;
@@ -174,7 +180,7 @@ static void record_advertisement(const struct ble_gap_disc_desc *discovery)
         ble_hs_adv_parse_fields(&fields, discovery->data, discovery->length_data) == 0;
 
     xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-    if (scan_status.state != CERBERUS_BLE_SCAN_RUNNING) {
+    if (!epoch || epoch != scan_callback_epoch || scan_status.state != CERBERUS_BLE_SCAN_RUNNING) {
         xSemaphoreGive(scanner_mutex);
         return;
     }
@@ -187,7 +193,10 @@ static void record_advertisement(const struct ble_gap_disc_desc *discovery)
     sentinel_watch_protocol_record_t protocol;
     bool matched = discovery->addr.type <= 3U && sentinel_watch_protocol_decode_ble(
         discovery->data, discovery->length_data, &protocol);
-    cerberus_watch_capture_observe(&watch_capture, matched ? &protocol : NULL,
+    if (callback_us >= 0)
+        cerberus_watch_capture_observe_timed(&watch_capture, matched ? &protocol : NULL,
+            discovery->addr.val, discovery->addr.type, discovery->rssi, 0U, (uint64_t)callback_us);
+    else cerberus_watch_capture_observe(&watch_capture, matched ? &protocol : NULL,
         discovery->addr.val, discovery->addr.type, discovery->rssi, 0U);
     /* Distinct-address lower bound replaces repeated overflow-report counting. */
     if (activity_capture.status.identities > scan_status.total_count)
@@ -232,14 +241,14 @@ static void record_advertisement(const struct ble_gap_disc_desc *discovery)
     xSemaphoreGive(scanner_mutex);
 }
 
-static void finish_scan(int reason)
+static void finish_scan_for_epoch(int reason, uint32_t epoch)
 {
-    ble_npl_callout_stop(&scan_timeout_callout);
     xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-    if (scan_status.state != CERBERUS_BLE_SCAN_RUNNING) {
+    if ((epoch && epoch != scan_callback_epoch) || scan_status.state != CERBERUS_BLE_SCAN_RUNNING) {
         xSemaphoreGive(scanner_mutex);
         return;
     }
+    ble_npl_callout_stop(&scan_timeout_callout);
     uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
     uint8_t watch_state = scan_cancelled ? CERBERUS_WATCH_IDLE :
         reason != 0 ? CERBERUS_WATCH_ERROR : CERBERUS_WATCH_COMPLETE;
@@ -276,21 +285,25 @@ static void finish_scan(int reason)
     xSemaphoreGive(scanner_mutex);
 }
 
+static void finish_scan(int reason)
+{ finish_scan_for_epoch(reason, 0U); }
+
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
-    (void)arg;
     switch (event->type) {
     case BLE_GAP_EVENT_DISC:
-        record_advertisement(&event->disc);
+        record_advertisement(&event->disc, (uint32_t)(uintptr_t)arg, esp_timer_get_time());
         break;
 #if MYNEWT_VAL(BLE_EXT_ADV)
     case BLE_GAP_EVENT_EXT_DISC: {
+        int64_t callback_us = esp_timer_get_time();
+        uint32_t epoch = (uint32_t)(uintptr_t)arg;
         const struct ble_gap_ext_disc_desc *extended = &event->ext_disc;
         if ((extended->props & BLE_HCI_ADV_SCAN_RSP_MASK) != 0U) break;
         if (extended->data_status != BLE_GAP_EXT_ADV_DATA_STATUS_COMPLETE) {
             /* Never concatenate partial reports or classify their prefixes. */
             xSemaphoreTake(scanner_mutex, portMAX_DELAY);
-            if (scan_status.state == CERBERUS_BLE_SCAN_RUNNING) {
+            if (epoch && epoch == scan_callback_epoch && scan_status.state == CERBERUS_BLE_SCAN_RUNNING) {
                 cerberus_ble_activity_observe(&activity_capture, extended->addr.val,
                     extended->addr.type, extended->data, extended->length_data, false,
                     (uint32_t)(esp_timer_get_time() / 1000LL));
@@ -308,12 +321,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 : ((extended->props & BLE_HCI_ADV_CONN_MASK) != 0U
                     ? BLE_HCI_ADV_RPT_EVTYPE_ADV_IND : BLE_HCI_ADV_RPT_EVTYPE_NONCONN_IND),
         };
-        record_advertisement(&discovery);
+        record_advertisement(&discovery, epoch, callback_us);
         break;
     }
 #endif
     case BLE_GAP_EVENT_DISC_COMPLETE:
-        finish_scan(event->disc_complete.reason);
+        if (arg) finish_scan_for_epoch(event->disc_complete.reason, (uint32_t)(uintptr_t)arg);
         break;
     case BLE_GAP_EVENT_CONNECT:
         xSemaphoreTake(scanner_mutex, portMAX_DELAY);
@@ -462,7 +475,11 @@ static void set_control_error(int rc, const char *operation)
 
 static void start_scan_event(struct ble_npl_event *event)
 {
-    (void)event;
+    uint32_t epoch = (uint32_t)(uintptr_t)ble_npl_event_get_arg(event);
+    xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+    bool current = epoch && epoch == scan_callback_epoch && scan_status.state == CERBERUS_BLE_SCAN_RUNNING;
+    xSemaphoreGive(scanner_mutex);
+    if (!current) return;
 #ifdef CERBERUS_C5_PANIC_DIAGNOSTIC
     esp_rom_printf("C5-DIAG start event\r\n");
 #endif
@@ -499,14 +516,14 @@ static void start_scan_event(struct ble_npl_event *event)
 #endif
 #if MYNEWT_VAL(BLE_EXT_ADV)
         rc = ble_gap_ext_disc(own_address_type, 0U, 0U, 0U, 0U, 0U,
-            &parameters, &parameters, gap_event, NULL);
+            &parameters, &parameters, gap_event, (void *)(uintptr_t)epoch);
 #else
         rc = ble_gap_disc(
             own_address_type,
             BLE_HS_FOREVER,
             &parameters,
             gap_event,
-            NULL);
+            (void *)(uintptr_t)epoch);
 #endif
         diagnostic_phase = 6;
 #ifdef CERBERUS_C5_PANIC_DIAGNOSTIC
@@ -908,7 +925,7 @@ static bool another_radio_operation_is_active(void)
     cerberus_wifi_scanner_get_status(&wifi_status);
     cerberus_wifi_connection_get_status(&wifi_connection);
     return cerberus_ieee802154_scanner_is_running() ||
-        cerberus_wifi_defense_survey_is_running() ||
+        cerberus_wifi_defense_survey_is_running() || cerberus_wifi_station_running() ||
         wifi_status.state == CERBERUS_WIFI_SCAN_RUNNING ||
         wifi_connection.state == CERBERUS_WIFI_CONNECTION_STAGING ||
         wifi_connection.state == CERBERUS_WIFI_CONNECTION_CONNECTING ||
@@ -918,6 +935,7 @@ static bool another_radio_operation_is_active(void)
 
 esp_err_t cerberus_ble_scanner_start(void)
 {
+    if(cerberus_c5_test_running())return ESP_ERR_INVALID_STATE;
     if (scanner_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -943,8 +961,12 @@ esp_err_t cerberus_ble_scanner_start(void)
     scan_status.error_code = 0;
     scan_cancelled = false;
     uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
-    cerberus_watch_capture_begin(&watch_capture, CERBERUS_WATCH_RADIO_BLE,
-        scan_status.generation, now_ms);
+    uint64_t epoch = watch_capture_epoch == UINT64_MAX ? 0U : ++watch_capture_epoch;
+    cerberus_watch_capture_begin_with_epoch(&watch_capture, CERBERUS_WATCH_RADIO_BLE,
+        scan_status.generation, now_ms, epoch);
+    ++scan_callback_epoch;
+    if (!scan_callback_epoch) ++scan_callback_epoch;
+    ble_npl_event_set_arg(&start_event, (void *)(uintptr_t)scan_callback_epoch);
     cerberus_ble_activity_begin(&activity_capture, scan_status.generation, now_ms,
         MYNEWT_VAL(BLE_EXT_ADV) != 0);
     memset(scan_results, 0, sizeof(scan_results));
@@ -979,6 +1001,60 @@ esp_err_t cerberus_ble_watch_get_data(const cerberus_watch_scan_data_request_t *
     return valid ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
+esp_err_t cerberus_ble_watch_get_timing(const cerberus_watch_scan_timing_request_t *request,
+    cerberus_watch_scan_timing_payload_t *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!request) return ESP_ERR_INVALID_ARG;
+    if (!scanner_mutex) return ESP_ERR_INVALID_STATE;
+    int64_t now_us = esp_timer_get_time();
+    xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+    bool valid = cerberus_watch_capture_get_timing(&watch_capture, request->radio,
+        request->generation, request->index, now_us >= 0 ? (uint64_t)now_us : 0U, out);
+    if (valid && now_us < 0) { out->flags = 0U; out->source_age_ms = 0U; }
+    xSemaphoreGive(scanner_mutex);
+    return valid ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+static esp_err_t ble_watch_motion_snapshot(const cerberus_watch_scan_data_request_t *request,
+    sentinel_watch_motion_t *motion, cerberus_watch_scan_timing_payload_t *timing)
+{
+    memset(motion, 0, sizeof(*motion));
+    memset(timing, 0, sizeof(*timing));
+    if (!request || request->chunk) return ESP_ERR_INVALID_ARG;
+    if (!scanner_mutex) return ESP_ERR_INVALID_STATE;
+    int64_t now_us = esp_timer_get_time();
+    xSemaphoreTake(scanner_mutex, portMAX_DELAY);
+    bool valid = cerberus_watch_capture_get_motion(&watch_capture, request->radio,
+        request->generation, request->index, now_us >= 0 ? (uint64_t)now_us : 0U, motion, timing);
+    if (valid && now_us < 0) { timing->flags = 0U; timing->source_age_ms = 0U; }
+    xSemaphoreGive(scanner_mutex);
+    return valid ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t cerberus_ble_watch_get_motion(const cerberus_watch_scan_data_request_t *request,
+    cerberus_watch_scan_motion_payload_t *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    sentinel_watch_motion_t motion;
+    cerberus_watch_scan_timing_payload_t timing;
+    esp_err_t error = ble_watch_motion_snapshot(request, &motion, &timing);
+    if (error != ESP_OK) return error;
+    out->radio = timing.radio; out->generation = timing.generation; out->index = timing.index;
+    out->capture_epoch = timing.capture_epoch; out->motion = motion;
+    return ESP_OK;
+}
+
+esp_err_t cerberus_ble_watch_get_motion_timing(const cerberus_watch_scan_data_request_t *request,
+    cerberus_watch_scan_timing_payload_t *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    sentinel_watch_motion_t motion;
+    return ble_watch_motion_snapshot(request, &motion, out);
+}
+
 esp_err_t cerberus_ble_watch_get_activity(uint8_t generation, cerberus_ble_activity_payload_t *out)
 {
     if (!out) return ESP_ERR_INVALID_ARG;
@@ -993,6 +1069,7 @@ esp_err_t cerberus_ble_watch_get_activity(uint8_t generation, cerberus_ble_activ
 
 esp_err_t cerberus_ble_connection_start(const cerberus_ble_connect_request_t *request)
 {
+    if(cerberus_c5_test_running())return ESP_ERR_INVALID_STATE;
     if (request == NULL || scanner_mutex == NULL || request->address_type > BLE_ADDR_RANDOM_ID) {
         return ESP_ERR_INVALID_ARG;
     }

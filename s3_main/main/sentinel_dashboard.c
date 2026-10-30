@@ -34,9 +34,10 @@ static const target_t targets[] = {
     { 12, 246, 94, 98, SENTINEL_DASHBOARD_WIFI },
     { 113, 246, 94, 98, SENTINEL_DASHBOARD_BLE },
     { 214, 246, 94, 98, SENTINEL_DASHBOARD_RADIO },
-    { 12, 356, 296, 52, SENTINEL_DASHBOARD_GUIDE },
+    { 12, 356, 144, 52, SENTINEL_DASHBOARD_SCAN },
     { 12, 418, 144, 46, SENTINEL_DASHBOARD_WATCH },
     { 164, 418, 144, 46, SENTINEL_DASHBOARD_TOOLS },
+    { 164, 356, 144, 52, SENTINEL_DASHBOARD_ATTACK },
 };
 
 /* 4,736 bytes; no full framebuffer, heap allocation or external RAM required. */
@@ -304,10 +305,7 @@ static esp_err_t observation_counts(const sentinel_dashboard_status_t *status)
     }
     TRY(cerberus_display_fill_rect(217, 305, 88, 9, PANEL));
     TRY(text_center(214, 305, 94, "EXPLORE >", WHITE, PANEL, 1));
-    snprintf(label, sizeof(label), "%u DONE", status->lessons_complete);
-    TRY(cerberus_display_fill_rect(250, 385, 51, 9, PANEL));
-    return cerberus_display_draw_text(298 - (uint16_t)(strlen(label) * 6U), 385,
-                                      label, VIOLET, PANEL, 1);
+    return ESP_OK;
 }
 
 static esp_err_t status_line(const sentinel_dashboard_status_t *status)
@@ -319,6 +317,8 @@ static esp_err_t status_line(const sentinel_dashboard_status_t *status)
     TRY(cerberus_display_fill_rect(12, 229, 296, 8, BG));
     const char *state = !status->touch_online ? "TOUCH UNAVAILABLE / USE USB" :
         !status->c5_online ? "CONNECTING TO THE ONBOARD RADIO" :
+        status->radio_state & CERBERUS_C5_RADIO_WIFI_STATIONS ? "WI-FI STATION CAPTURE" :
+        status->radio_state & CERBERUS_C5_RADIO_TEST ? "RADIO TEST RUNNING" :
         status->radio_state & CERBERUS_C5_RADIO_WIFI_DEFENSE_SURVEY ? "WI-FI SURVEY RUNNING" :
         status->radio_state & CERBERUS_C5_RADIO_WIFI_SCAN ? "WI-FI SCAN RUNNING" :
         status->radio_state & CERBERUS_C5_RADIO_BLE_SCAN ? "BLUETOOTH SCAN RUNNING" :
@@ -337,7 +337,7 @@ esp_err_t sentinel_dashboard_draw(const sentinel_dashboard_status_t *status, uin
     if (status == NULL) return ESP_ERR_INVALID_ARG;
     TRY(cerberus_display_fill_rect(0, 0, CERBERUS_LCD_WIDTH, CERBERUS_LCD_HEIGHT, BG));
     TRY(cerberus_display_draw_text(12, 13, "CERBERUS", WHITE, BG, 3));
-    TRY(cerberus_display_draw_text(13, 42, "S E N T I N E L", CYAN, BG, 1));
+    TRY(cerberus_display_draw_text(13, 42, "F I E L D  K I T", CYAN, BG, 1));
     TRY(cerberus_display_fill_rect(12, 57, 296, 1, BORDER));
     TRY(cerberus_display_fill_rect(12, 57, 52, 1, CYAN));
     TRY(sentinel_guardian_draw(frame, status->c5_online));
@@ -355,12 +355,14 @@ esp_err_t sentinel_dashboard_draw(const sentinel_dashboard_status_t *status, uin
     }
 
     TRY(panel(&targets[3], VIOLET));
-    TRY(cerberus_display_draw_text(24, 367, "FIELD GUIDE", WHITE, PANEL, 2));
-    TRY(cerberus_display_draw_text(24, 389, "LEARN WITH YOUR OWN DEVICES", MUTED, PANEL, 1));
-    TRY(cerberus_display_draw_text(283, 369, ">", VIOLET, PANEL, 2));
+    TRY(text_center(12, 367, 144, "SCAN", WHITE, PANEL, 2));
+    TRY(text_center(12, 389, 144, "NETWORK / BLE", MUTED, PANEL, 1));
+    TRY(panel(&targets[6], AMBER));
+    TRY(text_center(164, 367, 144, "ATTACK", WHITE, PANEL, 2));
+    TRY(text_center(164, 389, 144, "WI-FI / BLUETOOTH", MUTED, PANEL, 1));
 
     TRY(panel(&targets[4], CYAN));
-    TRY(text_center(12, 430, 144, "WATCH", WHITE, PANEL, 2));
+    TRY(text_center(12, 430, 144, "RECON", WHITE, PANEL, 2));
     TRY(text_center(12, 449, 144, "PASSIVE LOOKOUT", MUTED, PANEL, 1));
     TRY(panel(&targets[5], BORDER));
     TRY(text_center(164, 430, 144, "TOOLS", WHITE, PANEL, 2));

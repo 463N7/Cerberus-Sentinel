@@ -1,0 +1,11 @@
+CERBERUS-SCRIPT 1
+# Safe local display and timer demonstration.
+TEXT Cerberus local automation is ready.
+WAIT 1500
+DIALOG Only validated local actions are available.
+WAIT 2000
+TIMER 60
+QR https://463n7.io/products/cerberus-development-board
+WAIT 5000
+TEXT Script complete.
+END
